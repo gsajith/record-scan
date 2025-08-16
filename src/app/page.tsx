@@ -15,11 +15,15 @@ export default function Home() {
   const [gotResult, setGotResult] = useState<boolean>(false);
   const [result, setResult] = useState<AlbumResult | null>(null);
 
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
+
   const webcamRef = React.useRef<Webcam>(null);
   const capture = React.useCallback(() => {
     if (webcamRef.current) {
       const imageSrc = webcamRef.current.getScreenshot();
-      console.log(imageSrc);
+      setImageBase64(imageSrc);
+    } else {
+      setImageBase64(null);
     }
   }, [webcamRef]);
 
@@ -34,11 +38,11 @@ export default function Home() {
     setHasQuery(album.length > 0 && artist.length > 0);
   }, [album, artist]);
 
-  useEffect(() => {
-    const supportedConstraints =
-      navigator.mediaDevices.getSupportedConstraints();
-    console.log(supportedConstraints);
-  }, []);
+  // useEffect(() => {
+  //   fetch("./api/openai/image_detection?image=hiii")
+  //     .then((res) => res.json())
+  //     .then((json) => console.log(json));
+  // }, []);
 
   const doSearch = useCallback(() => {
     fetch(`/api/deezer/album?name=${album}`)
@@ -75,6 +79,21 @@ export default function Home() {
           />
           <button onClick={capture}>Capture photo</button>
         </div>
+
+        {imageBase64 && (
+          <div
+            onClick={() => {
+              navigator.clipboard.writeText(imageBase64);
+            }}
+            style={{
+              maxWidth: 600,
+              height: 200,
+              overflow: "scroll",
+              overflowWrap: "anywhere",
+            }}>
+            {imageBase64}
+          </div>
+        )}
 
         <input
           placeholder="Artist name"
