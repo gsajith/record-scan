@@ -56,6 +56,14 @@ export default function Home() {
   };
 
   useEffect(() => {
+    if (parsingImage) {
+      setGotResult(false);
+      setResult(null);
+      setError(0);
+    }
+  }, [parsingImage]);
+
+  useEffect(() => {
     console.log("do search?", album);
     if (album.length > 0) {
       console.log("Searching...");
