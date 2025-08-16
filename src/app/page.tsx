@@ -1,95 +1,104 @@
-import Image from "next/image";
+"use client";
 import styles from "./page.module.css";
+import { useCallback, useEffect, useState } from "react";
+import React from "react";
+import Webcam from "react-webcam";
 
 export default function Home() {
+  const [artist, setArtist] = useState<string>("");
+  const [album, setAlbum] = useState<string>("");
+  const [hasQuery, setHasQuery] = useState<boolean>(false);
+  const [gotResult, setGotResult] = useState<boolean>(false);
+  const [result, setResult] = useState({});
+
+  const webcamRef = React.useRef<Webcam>(null);
+  const capture = React.useCallback(() => {
+    if (webcamRef.current) {
+      const imageSrc = webcamRef.current.getScreenshot();
+      console.log(imageSrc);
+    }
+  }, [webcamRef]);
+
+  const videoConstraints = {
+    width: { min: 100 },
+    height: { min: 100 },
+    aspectRatio: 1,
+    facingMode: "environment",
+  };
+
+  useEffect(() => {
+    setHasQuery(album.length > 0 && artist.length > 0);
+  }, [album, artist]);
+
+  useEffect(() => {
+    const supportedConstraints =
+      navigator.mediaDevices.getSupportedConstraints();
+    console.log(supportedConstraints);
+  }, []);
+
+  const doSearch = useCallback(() => {
+    fetch(`/api/deezer/album?name=${album}`)
+      .then((res) => res.json())
+      .then((json) => {
+        const albumResults = json.data;
+        if (albumResults.length <= 0) {
+          setGotResult(false);
+        } else {
+          for (let i = 0; i < albumResults.length; i++) {
+            if (
+              albumResults[i].artist.name.toLowerCase() === artist.toLowerCase()
+            ) {
+              setGotResult(true);
+              setResult(albumResults[i]);
+            }
+          }
+        }
+      });
+  }, [album, artist]);
+
   return (
     <div className={styles.page}>
       <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol>
-          <li>
-            Get started by editing <code>src/app/page.tsx</code>.
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
-
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.secondary}
-          >
-            Read our docs
-          </a>
+        <div style={{ height: 300, width: 400, border: "1px solid white" }}>
+          <Webcam
+            audio={false}
+            ref={webcamRef}
+            screenshotFormat="image/jpeg"
+            width={"100%"}
+            height={"100%"}
+            videoConstraints={videoConstraints}
+          />
+          <button onClick={capture}>Capture photo</button>
         </div>
+
+        <input
+          placeholder="Artist name"
+          type="text"
+          value={artist}
+          onChange={(e) => setArtist(e.target.value)}
+        />
+        <input
+          placeholder="Album name"
+          type="text"
+          value={album}
+          onChange={(e) => setAlbum(e.target.value)}
+        />
+        <button onClick={doSearch} disabled={!hasQuery}>
+          Search for {album} by {artist}
+        </button>
+
+        {gotResult && (
+          <iframe
+            title="deezer-widget"
+            src={`https://widget.deezer.com/widget/dark/album/${result.id}`}
+            width="100%"
+            height="300"
+            style={{ borderRadius: 12 }}
+            frameBorder="0"
+            allowTransparency={true}
+            allow="encrypted-media; clipboard-write"></iframe>
+        )}
       </main>
-      <footer className={styles.footer}>
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
     </div>
   );
 }
