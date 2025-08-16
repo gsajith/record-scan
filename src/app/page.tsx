@@ -8,62 +8,71 @@ interface AlbumResult {
   id: number;
 }
 
+const videoConstraints = {
+  width: { min: 100 },
+  height: { min: 100 },
+  aspectRatio: 1,
+  facingMode: "environment",
+};
+
 export default function Home() {
   const [artist, setArtist] = useState<string>("");
-  const [album, setAlbum] = useState<string>("");
-  const [hasQuery, setHasQuery] = useState<boolean>(false);
+  const [album, setAlbum] = useState<string[]>([]);
+  const [error, setError] = useState<boolean>(false);
   const [gotResult, setGotResult] = useState<boolean>(false);
   const [result, setResult] = useState<AlbumResult | null>(null);
 
-  const [imageBase64, setImageBase64] = useState<string | null>(null);
-
   const webcamRef = React.useRef<Webcam>(null);
+
+  const doSearch = useCallback(() => {
+    if (album.length > 0) {
+      fetch(`/api/deezer/album?name=${album}`)
+        .then((res) => res.json())
+        .then((json) => {
+          const albumResults = json.data;
+          if (albumResults.length <= 0) {
+            setGotResult(false);
+          } else {
+            for (let i = 0; i < albumResults.length; i++) {
+              if (
+                albumResults[i].artist.name.toLowerCase() ===
+                artist.toLowerCase()
+              ) {
+                setGotResult(true);
+                setResult(albumResults[i]);
+              }
+            }
+            setResult(null);
+          }
+        });
+    }
+  }, [album, artist]);
+
   const capture = React.useCallback(() => {
     if (webcamRef.current) {
       const imageSrc = webcamRef.current.getScreenshot();
-      setImageBase64(imageSrc);
-    } else {
-      setImageBase64(null);
-    }
-  }, [webcamRef]);
-
-  const videoConstraints = {
-    width: { min: 100 },
-    height: { min: 100 },
-    aspectRatio: 1,
-    facingMode: "environment",
-  };
-
-  useEffect(() => {
-    setHasQuery(album.length > 0 && artist.length > 0);
-  }, [album, artist]);
-
-  // useEffect(() => {
-  //   fetch("./api/openai/image_detection?image=hiii")
-  //     .then((res) => res.json())
-  //     .then((json) => console.log(json));
-  // }, []);
-
-  const doSearch = useCallback(() => {
-    fetch(`/api/deezer/album?name=${album}`)
-      .then((res) => res.json())
-      .then((json) => {
-        const albumResults = json.data;
-        if (albumResults.length <= 0) {
-          setGotResult(false);
-        } else {
-          for (let i = 0; i < albumResults.length; i++) {
-            if (
-              albumResults[i].artist.name.toLowerCase() === artist.toLowerCase()
-            ) {
-              setGotResult(true);
-              setResult(albumResults[i]);
-            }
+      fetch(`./api/openai/image_detection`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ image: imageSrc }),
+      })
+        .then((res) => res.json())
+        .then((json) => {
+          if (json.error) {
+            setArtist("");
+            setAlbum([]);
+            setError(true);
+          } else {
+            setArtist(json.artist_name);
+            setAlbum(json.album_name);
+            setError(false);
+            doSearch();
           }
-          setResult(null);
-        }
-      });
-  }, [album, artist]);
+        });
+    }
+  }, [webcamRef, doSearch]);
 
   return (
     <div className={styles.page}>
@@ -80,36 +89,18 @@ export default function Home() {
           <button onClick={capture}>Capture photo</button>
         </div>
 
-        {imageBase64 && (
-          <div
-            onClick={() => {
-              navigator.clipboard.writeText(imageBase64);
-            }}
-            style={{
-              maxWidth: 600,
-              height: 200,
-              overflow: "scroll",
-              overflowWrap: "anywhere",
-            }}>
-            {imageBase64}
+        {album.length > 0 && !error && (
+          <div>
+            The album is {album} by {artist}!
           </div>
         )}
 
-        <input
-          placeholder="Artist name"
-          type="text"
-          value={artist}
-          onChange={(e) => setArtist(e.target.value)}
-        />
-        <input
-          placeholder="Album name"
-          type="text"
-          value={album}
-          onChange={(e) => setAlbum(e.target.value)}
-        />
-        <button onClick={doSearch} disabled={!hasQuery}>
-          Search for {album} by {artist}
-        </button>
+        {error && (
+          <div style={{ color: "red" }}>
+            No vinyl found in this image. Thanks for wasting my freakin&#39; GPT
+            tokens...
+          </div>
+        )}
 
         {gotResult && result && (
           <iframe

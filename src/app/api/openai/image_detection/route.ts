@@ -1,34 +1,70 @@
 import { NextRequest, NextResponse } from "next/server";
-
 import OpenAI from "openai";
+import { z } from "zod";
+import { zodTextFormat } from "openai/helpers/zod";
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const base64Image = searchParams.get("image");
+const AlbumDataExtraction = z.object({
+  album_name: z.string(),
+  artist_name: z.array(z.string()),
+  error: z.boolean(),
+});
 
-  console.log("image:", base64Image);
+export async function POST(request: NextRequest) {
+  const data = await request.json();
+  const base64Image = data.image;
+
+  console.log("hit here", data);
 
   const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
   });
 
-  const response = await openai.responses.create({
-    model: "gpt-5-mini",
-    input: [
-      {
-        role: "user",
-        content: [
-          { type: "input_text", text: "what's in this image?" },
-          {
-            type: "input_image",
-            image_url: `data:image/jpeg;base64,${base64Image}`,
-            detail: "high",
-          },
-        ],
+  try {
+    const response = await openai.responses.create({
+      model: "gpt-5-mini",
+      input: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: "what vinyl record is in this image? Set error to true if there is an error or no vinyl present.",
+            },
+            {
+              type: "input_image",
+              image_url: base64Image,
+              detail: "high",
+            },
+          ],
+        },
+      ],
+      text: {
+        format: zodTextFormat(AlbumDataExtraction, "album_data_extraction"),
       },
-    ],
-  });
-  console.log(response);
+    });
+    console.log(response);
 
-  return NextResponse.json(response);
+    if (
+      response.status === "incomplete" &&
+      response.incomplete_details?.reason === "max_output_tokens"
+    ) {
+      // Handle the case where the model did not return a complete response
+      throw new Error("Incomplete response");
+    }
+
+    // TODO: Handle refusals
+    // console.log(math_response);
+    // if (math_response.type === "refusal") {
+    //   // handle refusal
+    //   console.log(math_response.refusal);
+    // } else if (math_response.type === "output_text") {
+    //   console.log(math_response.text);
+    // } else {
+    //   throw new Error("No response content");
+    // }
+
+    return NextResponse.json(JSON.parse(response.output_text));
+  } catch (e) {
+    return NextResponse.json({ error: true });
+  }
 }
