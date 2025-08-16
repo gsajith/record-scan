@@ -1,6 +1,6 @@
 "use client";
 import styles from "./page.module.css";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import React from "react";
 import Webcam from "react-webcam";
 
@@ -18,34 +18,53 @@ const videoConstraints = {
 export default function Home() {
   const [artist, setArtist] = useState<string[]>([]);
   const [album, setAlbum] = useState<string>("");
-  const [error, setError] = useState<boolean>(false);
+  const [error, setError] = useState<number>(0);
   const [gotResult, setGotResult] = useState<boolean>(false);
   const [result, setResult] = useState<AlbumResult | null>(null);
 
+  const [parsingImage, setParsingImage] = useState<boolean>(false);
+  const [fetchingAlbum, setFetchingAlbum] = useState<boolean>(false);
+
   const webcamRef = React.useRef<Webcam>(null);
 
-  const doSearch = useCallback(() => {
-    if (album.length > 0) {
-      fetch(`/api/deezer/album?name=${album}`)
-        .then((res) => res.json())
-        .then((json) => {
-          const albumResults = json.data;
-          if (albumResults.length <= 0) {
-            setGotResult(false);
-          } else {
-            for (let i = 0; i < albumResults.length; i++) {
-              if (artist.includes(albumResults[i].artist.name.toLowerCase())) {
-                setGotResult(true);
-                setResult(albumResults[i]);
-              }
+  const doSearch = () => {
+    setFetchingAlbum(true);
+    fetch(`/api/deezer/album?name=${album}`)
+      .then((res) => res.json())
+      .then((json) => {
+        const albumResults = json.data;
+        console.log("albumResults", albumResults);
+        if (albumResults.length <= 0) {
+          setGotResult(false);
+        } else {
+          for (let i = 0; i < albumResults.length; i++) {
+            console.log(
+              albumResults[i].artist.name.toLowerCase(),
+              artist.includes(albumResults[i].artist.name.toLowerCase())
+            );
+            if (artist.includes(albumResults[i].artist.name.toLowerCase())) {
+              setGotResult(true);
+              setResult(albumResults[i]);
+              setFetchingAlbum(false);
+              return;
             }
-            setResult(null);
           }
-        });
+          setResult(null);
+          setFetchingAlbum(false);
+        }
+      });
+  };
+
+  useEffect(() => {
+    console.log("do search?", album);
+    if (album.length > 0) {
+      console.log("Searching...");
+      doSearch();
     }
-  }, [album, artist]);
+  }, [album]);
 
   const capture = React.useCallback(() => {
+    setParsingImage(true);
     if (webcamRef.current) {
       const imageSrc = webcamRef.current.getScreenshot();
       fetch(`./api/openai/image_detection`, {
@@ -57,19 +76,19 @@ export default function Home() {
       })
         .then((res) => res.json())
         .then((json) => {
-          if (json.error) {
+          setParsingImage(false);
+          if (json.error >= 0.95) {
             setArtist([]);
             setAlbum("");
-            setError(true);
+            setError(json.error);
           } else {
             setArtist(json.artist_name.map((a: string) => a.toLowerCase()));
             setAlbum(json.album_name);
-            setError(false);
-            doSearch();
+            setError(json.error);
           }
         });
     }
-  }, [webcamRef, doSearch]);
+  }, [webcamRef]);
 
   return (
     <div className={styles.page}>
@@ -83,16 +102,21 @@ export default function Home() {
             height={"100%"}
             videoConstraints={videoConstraints}
           />
-          <button onClick={capture}>Capture photo</button>
+          <button disabled={parsingImage} onClick={capture}>
+            Capture photo
+          </button>
         </div>
 
-        {album.length > 0 && !error && (
+        {parsingImage && <div>Parsing image...</div>}
+        {fetchingAlbum && <div>Fetching album...</div>}
+
+        {album.length > 0 && error < 0.95 && (
           <div>
             The album is {album} by {artist.join(", ")}!
           </div>
         )}
 
-        {error && (
+        {error >= 0.95 && (
           <div style={{ color: "red" }}>
             No vinyl found in this image. Thanks for wasting my freakin&#39; GPT
             tokens...
@@ -102,7 +126,7 @@ export default function Home() {
         {gotResult && result && (
           <iframe
             title="deezer-widget"
-            src={`https://widget.deezer.com/widget/dark/album/150129642`}
+            src={`https://widget.deezer.com/widget/dark/album/${result.id}`}
             width="100%"
             height="300"
             style={{ borderRadius: 12 }}

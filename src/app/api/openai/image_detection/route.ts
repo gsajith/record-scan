@@ -6,14 +6,12 @@ import { zodTextFormat } from "openai/helpers/zod";
 const AlbumDataExtraction = z.object({
   album_name: z.string(),
   artist_name: z.array(z.string()),
-  error: z.boolean(),
+  error: z.number(),
 });
 
 export async function POST(request: NextRequest) {
   const data = await request.json();
   const base64Image = data.image;
-
-  console.log("hit here", data);
 
   const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
@@ -28,7 +26,7 @@ export async function POST(request: NextRequest) {
           content: [
             {
               type: "input_text",
-              text: "what vinyl record is in this image? Set error to true if you are not sure, or if there are any unknowns which prevent your answer form being a certainty.",
+              text: "what vinyl record is in this image? Set the 'error' field to the percentage you are uncertain about the match, with 0 completely certain, and 1 being completely uncertain or some other parsing error occured, such as no vinyl albu detected in the image. Match the album name as exactly as you can to existing music databases, don't overexplain or add to the names.",
             },
             {
               type: "input_image",
@@ -65,6 +63,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(JSON.parse(response.output_text));
   } catch (e) {
-    return NextResponse.json({ error: true });
+    return NextResponse.json({ error: 1 });
   }
 }
