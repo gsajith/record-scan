@@ -1,6 +1,6 @@
 "use client";
 import styles from "./page.module.css";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import React from "react";
 import Webcam from "react-webcam";
 
@@ -16,8 +16,8 @@ const videoConstraints = {
 };
 
 export default function Home() {
-  const [artist, setArtist] = useState<string>("");
-  const [album, setAlbum] = useState<string[]>([]);
+  const [artist, setArtist] = useState<string[]>([]);
+  const [album, setAlbum] = useState<string>("");
   const [error, setError] = useState<boolean>(false);
   const [gotResult, setGotResult] = useState<boolean>(false);
   const [result, setResult] = useState<AlbumResult | null>(null);
@@ -34,10 +34,7 @@ export default function Home() {
             setGotResult(false);
           } else {
             for (let i = 0; i < albumResults.length; i++) {
-              if (
-                albumResults[i].artist.name.toLowerCase() ===
-                artist.toLowerCase()
-              ) {
+              if (artist.includes(albumResults[i].artist.name.toLowerCase())) {
                 setGotResult(true);
                 setResult(albumResults[i]);
               }
@@ -61,11 +58,11 @@ export default function Home() {
         .then((res) => res.json())
         .then((json) => {
           if (json.error) {
-            setArtist("");
-            setAlbum([]);
+            setArtist([]);
+            setAlbum("");
             setError(true);
           } else {
-            setArtist(json.artist_name);
+            setArtist(json.artist_name.map((a: string) => a.toLowerCase()));
             setAlbum(json.album_name);
             setError(false);
             doSearch();
