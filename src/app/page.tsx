@@ -4,12 +4,16 @@ import { useCallback, useEffect, useState } from "react";
 import React from "react";
 import Webcam from "react-webcam";
 
+interface AlbumResult {
+  id: number;
+}
+
 export default function Home() {
   const [artist, setArtist] = useState<string>("");
   const [album, setAlbum] = useState<string>("");
   const [hasQuery, setHasQuery] = useState<boolean>(false);
   const [gotResult, setGotResult] = useState<boolean>(false);
-  const [result, setResult] = useState({});
+  const [result, setResult] = useState<AlbumResult | null>(null);
 
   const webcamRef = React.useRef<Webcam>(null);
   const capture = React.useCallback(() => {
@@ -52,6 +56,7 @@ export default function Home() {
               setResult(albumResults[i]);
             }
           }
+          setResult(null);
         }
       });
   }, [album, artist]);
@@ -87,7 +92,7 @@ export default function Home() {
           Search for {album} by {artist}
         </button>
 
-        {gotResult && (
+        {gotResult && result && (
           <iframe
             title="deezer-widget"
             src={`https://widget.deezer.com/widget/dark/album/${result.id}`}
