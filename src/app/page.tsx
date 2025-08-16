@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import styles from "./page.module.css";
 import { useCallback, useEffect, useState } from "react";
 import React from "react";
@@ -21,6 +22,7 @@ export default function Home() {
   const [error, setError] = useState<number>(0);
   const [gotResult, setGotResult] = useState<boolean>(false);
   const [result, setResult] = useState<AlbumResult | null>(null);
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
 
   const [parsingImage, setParsingImage] = useState<boolean>(false);
   const [fetchingAlbum, setFetchingAlbum] = useState<boolean>(false);
@@ -60,6 +62,8 @@ export default function Home() {
       setGotResult(false);
       setResult(null);
       setError(0);
+    } else {
+      setImageSrc(null);
     }
   }, [parsingImage]);
 
@@ -75,6 +79,7 @@ export default function Home() {
     setParsingImage(true);
     if (webcamRef.current) {
       const imageSrc = webcamRef.current.getScreenshot();
+      setImageSrc(imageSrc);
       fetch(`./api/openai/image_detection`, {
         method: "POST",
         headers: {
@@ -102,17 +107,23 @@ export default function Home() {
     <div className={styles.page}>
       <main className={styles.main}>
         <div style={{ maxWidth: "100%", border: "1px solid white" }}>
-          <Webcam
-            audio={false}
-            ref={webcamRef}
-            screenshotFormat="image/jpeg"
-            width={"100%"}
-            height={"100%"}
-            videoConstraints={videoConstraints}
-          />
-          <button disabled={parsingImage} onClick={capture}>
-            Capture photo
-          </button>
+          <div style={{ display: imageSrc ? "none" : "block" }}>
+            <Webcam
+              audio={false}
+              ref={webcamRef}
+              screenshotFormat="image/jpeg"
+              width={"100%"}
+              height={"100%"}
+              videoConstraints={videoConstraints}
+            />
+            <button disabled={parsingImage} onClick={capture}>
+              Capture photo
+            </button>
+          </div>
+          {imageSrc && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={imageSrc} alt="Captured image" />
+          )}
         </div>
 
         {parsingImage && <div>Parsing image...</div>}
