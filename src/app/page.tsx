@@ -59,7 +59,7 @@ export default function Home() {
   return (
     <div className={styles.page}>
       <main className={styles.main}>
-        <div style={{ height: 300, width: 400, border: "1px solid white" }}>
+        <div style={{ maxWidth: "100%", border: "1px solid white" }}>
           <Webcam
             audio={false}
             ref={webcamRef}
