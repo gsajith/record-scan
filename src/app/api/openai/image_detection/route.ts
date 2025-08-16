@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
           content: [
             {
               type: "input_text",
-              text: "what vinyl record is in this image? Set error to true if there is an error or no vinyl present.",
+              text: "what vinyl record is in this image? Set error to true if you are not sure, or if there are any unknowns which prevent your answer form being a certainty.",
             },
             {
               type: "input_image",

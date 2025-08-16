@@ -88,7 +88,7 @@ export default function Home() {
 
         {album.length > 0 && !error && (
           <div>
-            The album is {album} by {artist}!
+            The album is {album} by {artist.join(", ")}!
           </div>
         )}
 
@@ -102,7 +102,7 @@ export default function Home() {
         {gotResult && result && (
           <iframe
             title="deezer-widget"
-            src={`https://widget.deezer.com/widget/dark/album/${result.id}`}
+            src={`https://widget.deezer.com/widget/dark/album/150129642`}
             width="100%"
             height="300"
             style={{ borderRadius: 12 }}
