@@ -1,17 +1,19 @@
+# Run from the repo root: python -m pipeline.metadata.fetch_cover_art
 import asyncio
 import aiohttp
 import aiofiles
 import os
 import json
+import re
 import time
-from pathlib import Path
+
+from pipeline import config
 
 # ---------------- CONFIG ---------------- #
+# JSON files, all in config.META_DIR. Images go to config.image_path(release_id).
 INPUT_JSON = "slim_releases_with_covers.json"
-
-OUTPUT_DIR = "/Volumes/Seagate Portabl/Pictures/record_scan_cover_images"
-FAILED_FILE = Path("failed_cover_fetches.json")
-EXISTING_FILE_LIST = Path("existing_files.json")
+FAILED_FILE = "failed_cover_fetches.json"
+EXISTING_FILE_LIST = "existing_files.json"
 
 NUM_TO_FETCH = 5555555               # How many to fetch this run
 CONCURRENCY = 20                     # Parallelism
@@ -22,7 +24,17 @@ SAVE_EXISTING_INTERVAL = 100         # Save existing_files JSON every N download
 SAVE_FAILED_INTERVAL = 100           # Save failed map every N failures
 # ---------------------------------------- #
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+# Cover Art Archive image ids are numeric (stored as int or digit string)
+COVER_ID_RE = re.compile(r"[0-9]+")
+
+
+def has_safe_ids(release):
+    """True if release_id and cover_id are safe to put in a URL and a file path."""
+    cover_id = release.get("cover_id")
+    return config.is_uuid(release["id"]) and (
+        cover_id is None or COVER_ID_RE.fullmatch(str(cover_id)) is not None
+    )
+
 
 async def download_image(session, release, sem, idx, total):
     """Download one cover image."""
@@ -33,7 +45,7 @@ async def download_image(session, release, sem, idx, total):
         return f"skip2:{release_id}:{idx}:{total}:no cover ID"
 
     url = f"https://coverartarchive.org/release/{release_id}/{cover_id}{IMAGE_SIZE_SUFFIX}.jpg"
-    out_path = os.path.join(OUTPUT_DIR, f"{release_id}.jpg")
+    out_path = config.image_path(release_id)
 
     async with sem:
         try:
@@ -42,6 +54,7 @@ async def download_image(session, release, sem, idx, total):
                 resp.raise_for_status()
                 content = await resp.read()
 
+            out_path.parent.mkdir(exist_ok=True)
             async with aiofiles.open(out_path, "wb") as f:
                 await f.write(content)
 
@@ -53,30 +66,41 @@ async def download_image(session, release, sem, idx, total):
 
 
 async def main():
+    image_root = config.require_image_root()
+    failed_file = config.META_DIR / FAILED_FILE
+    existing_file_list = config.META_DIR / EXISTING_FILE_LIST
+
     # Load JSON
     print("Loading JSON into memory...")
-    with open(INPUT_JSON, "r", encoding="utf-8") as f:
+    with open(config.META_DIR / INPUT_JSON, "r", encoding="utf-8") as f:
         data = json.load(f)
     print(f"Loaded {len(data):,} records")
 
+    safe = [r for r in data if has_safe_ids(r)]
+    print(f"Skipped {len(data) - len(safe):,} records with a malformed release_id or cover_id")
+    data = safe
+
     # Load or scan existing files
-    if EXISTING_FILE_LIST.exists():
-        with open(EXISTING_FILE_LIST, "r", encoding="utf-8") as f:
+    if existing_file_list.exists():
+        with open(existing_file_list, "r", encoding="utf-8") as f:
             existing_files = set(json.load(f))
         print(f"Loaded {len(existing_files):,} existing files from JSON")
     else:
-        print("Scanning output directory for existing images...")
+        print("Scanning image prefix folders for existing images...")
         existing_files = set()
         count = 0
-        for entry in os.scandir(OUTPUT_DIR):
-            if entry.is_file() and entry.name.endswith(".jpg"):
-                existing_files.add(entry.name.split(".")[0])
-            count += 1
-            if count % 100_000 == 0:
-                print(f"Scanned {count:,} files so far...", flush=True)
+        for prefix in os.scandir(image_root):
+            if not prefix.is_dir():
+                continue
+            for entry in os.scandir(prefix.path):
+                if entry.is_file() and entry.name.endswith(".jpg"):
+                    existing_files.add(entry.name.split(".")[0])
+                count += 1
+                if count % 100_000 == 0:
+                    print(f"Scanned {count:,} files so far...", flush=True)
         print(f"Found {len(existing_files):,} existing images")
         # Save initial scan
-        with open(EXISTING_FILE_LIST, "w", encoding="utf-8") as f:
+        with open(existing_file_list, "w", encoding="utf-8") as f:
             json.dump(list(existing_files), f)
 
     # Filter out already-downloaded entries
@@ -86,8 +110,8 @@ async def main():
     print(f"Prepared {len(targets):,} targets to fetch")
 
     # Load failed map if exists
-    if FAILED_FILE.exists():
-        with open(FAILED_FILE, "r", encoding="utf-8") as f:
+    if failed_file.exists():
+        with open(failed_file, "r", encoding="utf-8") as f:
             failed_map = json.load(f)
         print(f"Loaded {len(failed_map):,} failed entries")
     else:
@@ -117,7 +141,7 @@ async def main():
                 existing_files.add(release_id)
 
                 if downloaded_count % SAVE_EXISTING_INTERVAL == 0:
-                    async with aiofiles.open(EXISTING_FILE_LIST, "w", encoding="utf-8") as f:
+                    async with aiofiles.open(existing_file_list, "w", encoding="utf-8") as f:
                         await f.write(json.dumps(list(existing_files), ensure_ascii=False))
                     print(f"Saved {len(existing_files):,} existing files to JSON")
 
@@ -134,7 +158,7 @@ async def main():
                 failed_map[release_id] = {"idx": idx, "error": f"{err_type} {err_msg}"}
 
                 if len(failed_map) % SAVE_FAILED_INTERVAL == 0:
-                    async with aiofiles.open(FAILED_FILE, "w", encoding="utf-8") as f:
+                    async with aiofiles.open(failed_file, "w", encoding="utf-8") as f:
                         await f.write(json.dumps(failed_map, ensure_ascii=False, indent=2))
                     print(f"Saved {len(failed_map):,} failed entries to JSON")
 
@@ -155,9 +179,9 @@ async def main():
     print(f"Projected time for {TOTAL_ENTRIES_ESTIMATE:,}: {projected_hours:.1f} hours")
 
     # Final save of failed map and existing_files
-    async with aiofiles.open(FAILED_FILE, "w", encoding="utf-8") as f:
+    async with aiofiles.open(failed_file, "w", encoding="utf-8") as f:
         await f.write(json.dumps(failed_map, ensure_ascii=False, indent=2))
-    async with aiofiles.open(EXISTING_FILE_LIST, "w", encoding="utf-8") as f:
+    async with aiofiles.open(existing_file_list, "w", encoding="utf-8") as f:
         await f.write(json.dumps(list(existing_files), ensure_ascii=False))
 
 if __name__ == "__main__":
