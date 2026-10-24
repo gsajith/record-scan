@@ -1,0 +1,18 @@
+[
+  {
+    "title": "The Division Bell",
+    "id": "65ee4ee0-2eb7-33f9-b1b3-aeb8b192a66c",
+    "artist_ids": ["83d91898-7763-47d7-b03b-b92132375c47"],
+    "asin": "B000002A3T",
+    "disambiguation": "",
+    "format": "CD",
+    "aliases": ["Division Bell"]
+  },
+  {
+    "83d91898-7763-47d7-b03b-b92132375c47": {
+      "name": "Pink Floyd",
+      "aliases": ["Floyd", "Pink Floid", "The Pink Floyd"],
+      "disambiguation": ""
+    }
+  }
+]
