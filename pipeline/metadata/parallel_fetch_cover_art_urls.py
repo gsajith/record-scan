@@ -1,12 +1,14 @@
+# Run from the repo root: python -m pipeline.metadata.parallel_fetch_cover_art_urls
 import asyncio
 import aiohttp
 import json
-from pathlib import Path
 
-# File paths
-INPUT_FILE = Path("slim_releases.json")
-OUTPUT_FILE = Path("slim_releases_with_covers.json")
-FAILED_FILE = Path("failed_cover_id_fetches.json")
+from pipeline import config
+
+# File names, all in config.META_DIR
+INPUT_FILE = "slim_releases.json"
+OUTPUT_FILE = "slim_releases_with_covers.json"
+FAILED_FILE = "failed_cover_id_fetches.json"
 
 # Config
 API_BASE = "https://coverartarchive.org/release/"
@@ -75,10 +77,10 @@ async def save_progress(releases, cover_map, failed_map):
 
 def write_files(releases, cover_map, failed_map):
     # Save the full releases file
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    with open(config.META_DIR / OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(releases, f, ensure_ascii=False, indent=2)
     # Save failed fetches only
-    with open(FAILED_FILE, "w", encoding="utf-8") as f:
+    with open(config.META_DIR / FAILED_FILE, "w", encoding="utf-8") as f:
         json.dump(failed_map, f, ensure_ascii=False, indent=2)
 
 
@@ -119,21 +121,24 @@ async def worker(name, session, queue, releases, cover_map, failed_map, new_ids,
 
 
 async def main():
+    output_file = config.META_DIR / OUTPUT_FILE
+    failed_file = config.META_DIR / FAILED_FILE
+
     # Load releases
-    with open(INPUT_FILE, "r", encoding="utf-8") as f:
+    with open(config.META_DIR / INPUT_FILE, "r", encoding="utf-8") as f:
         releases = json.load(f)
 
     # Resume existing output if present
-    if OUTPUT_FILE.exists():
-        with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
+    if output_file.exists():
+        with open(output_file, "r", encoding="utf-8") as f:
             processed = json.load(f)
         cover_map = {r["id"]: r.get("cover_id") for r in processed}
     else:
         cover_map = {}
 
     # Resume failed fetches
-    if FAILED_FILE.exists():
-        with open(FAILED_FILE, "r", encoding="utf-8") as f:
+    if failed_file.exists():
+        with open(failed_file, "r", encoding="utf-8") as f:
             failed_map = json.load(f)
     else:
         failed_map = {}

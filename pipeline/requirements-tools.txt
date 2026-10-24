@@ -1,0 +1,6 @@
+umap-learn
+plotly
+dash
+supabase
+python-dotenv
+ultralytics

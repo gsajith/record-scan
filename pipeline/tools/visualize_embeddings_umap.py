@@ -4,8 +4,10 @@ visualize_embeddings_umap_all.py
 --------------------------------
 Loads all .npz embedding shards, merges them, and visualizes with UMAP + Plotly + Dash.
 Clicking a point displays the corresponding album cover image.
+Run from the repo root: python -m pipeline.tools.visualize_embeddings_umap <shard_dir>
 """
 
+import argparse
 import os
 import glob
 import numpy as np
@@ -13,7 +15,11 @@ import plotly.graph_objs as go
 from dash import Dash, html, dcc, Input, Output
 import umap
 
-from embed_batch import OUT_DIR, IMAGE_ROOT
+from pipeline import config
+
+parser = argparse.ArgumentParser(description="Visualize embedding shards with UMAP.")
+parser.add_argument("shard_dir", help="folder of .npz shards, e.g. under config.EMB_DIR")
+SHARD_DIR = parser.parse_args().shard_dir
 
 # ---- CONFIG ----
 RANDOM_SEED = 42
@@ -22,7 +28,7 @@ MIN_DIST = 0.1
 MAX_POINTS = None  # or set to an int if you want a random subsample for speed
 
 # ---- LOAD AND MERGE SHARDS ----
-shards = sorted(glob.glob(os.path.join(OUT_DIR, "*.npz")))
+shards = sorted(glob.glob(os.path.join(SHARD_DIR, "*.npz")))
 if not shards:
     raise FileNotFoundError("No .npz files found in directory.")
 
@@ -100,8 +106,7 @@ def display_image(clickData):
     if not clickData:
         return None
     uuid = clickData["points"][0]["text"]
-    prefix = uuid[:2]
-    img_path = os.path.join(IMAGE_ROOT, prefix, f"{uuid}.jpg")
+    img_path = config.image_path(uuid)
     if not os.path.exists(img_path):
         print(f"Image not found: {img_path}")
         return None
