@@ -1,32 +1,12 @@
 {
   "name": "record-scan",
-  "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
     "prepare": "husky"
-  },
-  "dependencies": {
-    "next": "15.5.28",
-    "openai": "^5.12.2",
-    "react": "19.1.0",
-    "react-dom": "19.1.0",
-    "react-webcam": "^7.2.0",
-    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@commitlint/cli": "20.5.3",
     "@commitlint/config-conventional": "20.5.3",
-    "@eslint/eslintrc": "^3",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "15.5.28",
-    "husky": "9.1.7",
-    "typescript": "^5"
+    "husky": "9.1.7"
   }
 }
