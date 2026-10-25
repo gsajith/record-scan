@@ -97,12 +97,21 @@ async function convertWithSips(input: Buffer): Promise<Buffer> {
   }
 }
 
+/**
+ * One JSON line. Python's splitlines() also breaks on U+0085, U+2028 and U+2029, which
+ * JSON.stringify leaves raw, so a note containing one is escaped to keep the line whole.
+ */
+function toJsonLine(value: unknown): string {
+  const json = JSON.stringify(value).replace(/[\u0085\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  return json + "\n";
+}
+
 /** Append one already-checked label. A re-label is a new line; readers keep the latest per sha1. */
 export function appendLabel(setDir: string, label: Label): void {
   mkdirSync(setDir, { recursive: true });
   const fd = openSync(join(setDir, "labels.jsonl"), "a");
   try {
-    writeSync(fd, JSON.stringify(label) + "\n");
+    writeSync(fd, toJsonLine(label));
     fsyncSync(fd); // a label is a person's minute of work; don't lose it to a crash
   } finally {
     closeSync(fd);

@@ -26,7 +26,11 @@ function errorText(body: unknown, fallback: string): string {
 type QueueResponse = { next: QueueItem | null; remaining: number; counts: Counts };
 
 async function fetchQueue(skip: string[]): Promise<QueueResponse> {
-  const res = await fetch(`/api/queue?${new URLSearchParams({ set: SET, skip: skip.join(",") })}`);
+  const res = await fetch("/api/queue", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ set: SET, skip }),
+  });
   const body = await res.json();
   if (!res.ok) throw new Error(errorText(body, "Couldn't load the next photo."));
   return body;
@@ -58,6 +62,8 @@ export default function LabelerPage() {
 
   const searchRef = useRef<HTMLInputElement>(null);
   const lastVideo = useRef<string | null>(null);
+  // Only the newest queue load may change the photo; a paste also makes older loads stale
+  const loadId = useRef(0);
   const [focusSearchTick, setFocusSearchTick] = useState(0);
   const focusSearch = useCallback(() => setFocusSearchTick((n) => n + 1), []);
 
@@ -78,6 +84,7 @@ export default function LabelerPage() {
 
   const applyQueue = useCallback(
     (body: QueueResponse) => {
+      setError(null);
       setPhoto(body.next);
       setRemaining(body.remaining);
       setCounts(body.counts);
@@ -92,11 +99,14 @@ export default function LabelerPage() {
 
   // Callers set busy first; it starts as "load" for the first fetch
   const loadNext = useCallback(
-    (skip: string[]) =>
-      fetchQueue(skip)
-        .then(applyQueue)
-        .catch((e: Error) => setError(e.message))
-        .finally(() => setBusy(null)),
+    (skip: string[]) => {
+      const id = ++loadId.current;
+      const current = () => id === loadId.current;
+      return fetchQueue(skip)
+        .then((body) => current() && applyQueue(body))
+        .catch((e: Error) => current() && setError(e.message))
+        .finally(() => current() && setBusy(null));
+    },
     [applyQueue],
   );
 
@@ -110,6 +120,7 @@ export default function LabelerPage() {
 
   const ingest = useCallback(
     async (file: File) => {
+      loadId.current += 1;
       setBusy("ingest");
       setError(null);
       setStatus(null);
@@ -208,7 +219,7 @@ export default function LabelerPage() {
   }
 
   function skip() {
-    if (!photo) return;
+    if (!photo || busy !== null) return;
     const next = [...skipped, photo.sha1];
     setSkipped(next);
     setStatus(null);
@@ -227,6 +238,8 @@ export default function LabelerPage() {
       if (e.key === "Enter" && e.target instanceof HTMLButtonElement) return;
       const action = hotkeyAction({ key: e.key, typing: isTyping(e.target), modifier: e.metaKey || e.ctrlKey || e.altKey });
       if (!action || !photo) return;
+      // A held key repeats; one press should save or skip one photo
+      if (e.repeat && (action.type === "skip" || action.type === "save")) return;
       e.preventDefault();
       if (action.type === "kind") setKind(action.kind);
       else if (action.type === "tag") toggleTag(action.tag);
@@ -346,18 +359,21 @@ export default function LabelerPage() {
             {query.trim() && !searchError && results.length === 0 && <p className={styles.hint}>No releases match.</p>}
             <ul className={styles.results} id="results" role="listbox" aria-label="Search results">
               {results.map((r, i) => (
-                <li key={r.mbid}>
+                <li key={r.mbid} role="presentation">
                   <button
                     type="button"
                     id={`result-${i}`}
                     role="option"
-                    aria-selected={r.mbid === picked?.mbid}
+                    aria-selected={i === active}
                     className={[
                       r.mbid === picked?.mbid ? styles.resultOn : styles.result,
                       i === active ? styles.resultActive : "",
                     ].join(" ")}
                     tabIndex={-1}
-                    onClick={() => setPicked(r)}
+                    onClick={(e) => {
+                      setPicked(r);
+                      e.currentTarget.blur(); // so the next Enter saves instead of clicking this again
+                    }}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element -- Cover Art Archive thumbnail, hot-linked for display only */}
                     <img

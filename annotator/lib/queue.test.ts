@@ -93,4 +93,29 @@ describe("nextInQueue", () => {
     expect(a.next?.video).toBe("record");
     expect(readdirSync(join(setDir, "inbox"))).toEqual(["done"]);
   });
+
+  it("moves an unreadable inbox file aside instead of getting stuck on it", async () => {
+    const setDir = tempSetDir();
+    mkdirSync(join(setDir, "inbox"), { recursive: true });
+    writeFileSync(join(setDir, "inbox", "broken-01.jpg"), "not really a jpeg");
+    writeFileSync(join(setDir, "inbox", "good-01.jpg"), await jpeg("#123"));
+
+    expect((await nextInQueue(setDir)).next?.video).toBe("good");
+    expect(readdirSync(join(setDir, "inbox", "unreadable"))).toEqual(["broken-01.jpg"]);
+  });
+
+  it("only treats the frame sampler's -NN suffix as a video frame", async () => {
+    const setDir = tempSetDir();
+    mkdirSync(join(setDir, "inbox"), { recursive: true });
+    writeFileSync(join(setDir, "inbox", "scan-1.jpg"), await jpeg("#321"));
+    expect((await nextInQueue(setDir)).next?.video).toBe("scan-1");
+  });
+
+  it("ignores a damaged line in the sources file", async () => {
+    const setDir = tempSetDir();
+    mkdirSync(join(setDir, "inbox", "done"), { recursive: true });
+    writeFileSync(join(setDir, "inbox", "done", "sources.jsonl"), '{"sha1": "trunc\n');
+    writeFileSync(join(setDir, "inbox", "abbey-01.jpg"), await jpeg("#456"));
+    expect((await nextInQueue(setDir)).next?.video).toBe("abbey");
+  });
 });

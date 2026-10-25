@@ -14,8 +14,9 @@ const IMAGE_FILE = /\.(jpe?g|png|heic|heif)$/i;
  */
 export type QueueItem = { sha1: string; file: string; video: string | null };
 
+// The sampler writes exactly two digits; "scan-1.jpg" dropped in by hand is its own photo
 function videoOf(frameName: string): string {
-  return frameName.replace(/\.[^.]+$/, "").replace(/-\d+$/, "");
+  return frameName.replace(/\.[^.]+$/, "").replace(/-\d{2}$/, "");
 }
 
 // Which inbox frame each photo came from, one { sha1, frame } line per frame taken, so any
@@ -23,13 +24,23 @@ function videoOf(frameName: string): string {
 const SOURCES = join("inbox", "done", "sources.jsonl");
 
 function readSources(setDir: string): Map<string, string> {
+  let text: string;
   try {
-    const lines = readFileSync(join(setDir, SOURCES), "utf8").split("\n").filter(Boolean);
-    return new Map(lines.map((l) => JSON.parse(l) as { sha1: string; frame: string }).map((s) => [s.sha1, s.frame]));
+    text = readFileSync(join(setDir, SOURCES), "utf8");
   } catch (e) {
     if (isMissing(e)) return new Map();
     throw e;
   }
+  const sources = new Map<string, string>();
+  for (const line of text.split("\n")) {
+    try {
+      const { sha1, frame } = JSON.parse(line) as { sha1: unknown; frame: unknown };
+      if (typeof sha1 === "string" && typeof frame === "string") sources.set(sha1, frame);
+    } catch {
+      // only a hint for the page; a torn line just means that photo starts a new record
+    }
+  }
+  return sources;
 }
 
 function isMissing(e: unknown): boolean {

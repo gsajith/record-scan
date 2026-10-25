@@ -75,6 +75,22 @@ describe("appendLabel", () => {
   });
 });
 
+describe("appendLabel line separators", () => {
+  // Python's splitlines() also breaks on these, so they must never appear raw in a line
+  it("escapes U+2028, U+2029 and U+0085 so Python reads the note back as one line", () => {
+    const setDir = tempSetDir("gold");
+    const sha1 = "86f7e437faa5a7fce15d1ddcb9eaeaea377667b8";
+    const notes = "glare\u2028left\u2029corner\u0085here";
+    appendLabel(setDir, {
+      file: `photos/${sha1}.jpg`, sha1, kind: "negative", mbid: null, tags: [], source_url: null,
+      license: "own", split: "eval", notes, labeled_at: "2026-10-25T04:00:00Z",
+    });
+    const text = readFileSync(join(setDir, "labels.jsonl"), "utf8");
+    expect(text).not.toMatch(/[\u2028\u2029\u0085]/);
+    expect(JSON.parse(text).notes).toBe(notes);
+  });
+});
+
 describe("countLabels", () => {
   // From SPLIT_VECTORS: the first lands in eval, the second in sim
   const evalSha1 = "86f7e437faa5a7fce15d1ddcb9eaeaea377667b8";
