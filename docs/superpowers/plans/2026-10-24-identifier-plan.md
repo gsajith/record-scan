@@ -373,13 +373,12 @@ Nothing here is deleted by an agent. Each row names the task whose completion ma
 | Item under `~/Projects/record-scan-data` | Size | Removable after | Why |
 |---|---|---|---|
 | `metadata/uuid_to_metadata.json` | 840 MB | Task 1 (catalog.sqlite built, tests pass) | `Catalog` replaces it; regenerable from `slim_releases_with_covers.json` in a minute anyway |
-| `embeddings/clip-vit-b-32-aug13/` | 1.1 GB with the smoke index | issue #15 (Task 4's CLIP smoke test was the last reader) | November 2025 augmented shards built with the GELU config; the one-vector design never uses them |
 | `_archive-album-annotator-2025-11/` | about 28 MB after cleanup | Task 3 (labeler merged) | the GitHub repo gsajith/album-annotator is archived and holds the same history |
 | `_archive-mbdump-2025-11/` | about 1.1 GB after cleanup, almost all `.git` | Task 6 (delta fetch merged) | the scripts are in `pipeline/legacy/`; only the August 2025 commit history remains here |
 | `~/.cache/clip` (1.2 GB), `~/.cache/torch/hub/checkpoints` (1.2 GB), HF `models--openai--clip-vit-base-patch32` (1.1 GB) | 3.5 GB | now | the OpenAI `clip` package, DINOv2 hub weights and transformers CLIP are not used by the new retrieval core |
 | HF `models--timm--vit_base_patch32_clip_224.openai` | 577 MB | keep | open_clip loads the `clip-vit-b-32` baseline from this cache |
 
-Already removed on 2026-10-24 at Gautham's request: `_archive-mbdump-2025-11/venv` (1.4 GB) and `_archive-album-annotator-2025-11/node_modules` (419 MB).
+Already removed on 2026-10-24 at Gautham's request: `_archive-mbdump-2025-11/venv` (1.4 GB) and `_archive-album-annotator-2025-11/node_modules` (419 MB). On 2026-10-25, after issue #15 merged: `embeddings/clip-vit-b-32-aug13/` (1.1 GB with the smoke index), the November 2025 augmented shards built with the GELU config.
 
 ---
 
