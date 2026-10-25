@@ -1,20 +1,22 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { parseSet, setDir } from "@/lib/data";
-import { checkLabel, splitFor } from "@/lib/labels";
+import { z } from "zod";
+import { setDir } from "@/lib/data";
+import { checkLabel, SETS, splitFor } from "@/lib/labels";
 import { appendLabel } from "@/lib/store";
+
+// The label itself is checked by checkLabel once the server has filled in split and time
+const RequestSchema = z.object({ set: z.enum(SETS), label: z.record(z.string(), z.unknown()) });
 
 // POST /api/label, json { set, label } -> { ok: true }
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as { set?: unknown; label?: Record<string, unknown> } | null;
-  const set = parseSet(body?.set);
-  if (!set || typeof body?.label !== "object" || body.label === null) {
-    return Response.json({ error: "expected { set, label }" }, { status: 400 });
-  }
+  const body = RequestSchema.safeParse(await request.json().catch(() => null));
+  if (!body.success) return Response.json({ error: "expected { set, label }" }, { status: 400 });
+  const { set, label } = body.data;
   // The server owns the split and the time, so a client cannot move a photo between halves
-  const sha1 = String(body.label.sha1 ?? "");
+  const sha1 = String(label.sha1 ?? "");
   const checked = checkLabel(set, {
-    ...body.label,
+    ...label,
     split: splitFor(set, sha1),
     labeled_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
   });

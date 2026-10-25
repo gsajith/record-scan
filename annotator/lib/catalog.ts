@@ -1,5 +1,6 @@
 // Read-only search over catalog.sqlite, built by `python -m pipeline.metadata.build_catalog_db`.
-// Mirrors pipeline/metadata/catalog.py.
+// Mirrors normalize() and Catalog.search() from pipeline/metadata/catalog.py; the labeler needs
+// nothing else from it. Uses Node's built-in node:sqlite (Node 24+), so no native package.
 
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -10,11 +11,16 @@ const TRAILING_THE = /,\s*the$/;
 /**
  * Matching form of a title or artist name: "Beatles, The" and "The Beatles" both give "beatles".
  * Apostrophes are dropped ("don't" -> "dont"); other punctuation and symbols split words
- * ("AC/DC" -> "ac dc"), as the FTS5 tokenizer does. toLowerCase stands in for Python's
- * casefold, which differs only for a few letters such as ß.
+ * ("AC/DC" -> "ac dc"), as the FTS5 tokenizer does.
+ *
+ * Close to the Python version, not identical: Python drops marks with a nonzero combining
+ * class and casefolds, and JavaScript has neither. Dropping nonspacing marks (\p{Mn}) and
+ * lowercasing gives the same result for Latin, Greek, Cyrillic and Japanese text. A few
+ * scripts differ, such as Thai vowel signs and the German ß, so a query for those may need
+ * the spelling the catalog uses.
  */
 export function normalize(s: string): string {
-  s = s.toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "").trim();
+  s = s.toLowerCase().normalize("NFKD").replace(/\p{Mn}/gu, "").trim();
   s = s.replace(TRAILING_THE, "");
   s = s.replace(APOSTROPHES, "").replace(/[\p{P}\p{S}]/gu, " ");
   s = s.split(/\s+/).filter(Boolean).join(" ");

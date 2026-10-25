@@ -1,5 +1,7 @@
 // Label records for the gold and wild photo sets. Mirrors pipeline/gold/labels.py, which the
 // eval reads: keep the lists, the split rule and the validation rules identical in both.
+// This side also checks that sha1 is 40 hex characters and source_url is a URL, which the
+// Python loader does not; being stricter here only means it never writes a line Python rejects.
 import { z } from "zod";
 
 export const SETS = ["gold", "wild"] as const;
@@ -10,14 +12,17 @@ export const TAGS = ["tilt", "glare", "dark", "colored-light", "hand", "shrink-w
 export const LICENSES = ["own", "cc0", "cc-by", "cc-by-sa", "pexels", "unsplash", "other-permitted"] as const;
 
 export type SetName = (typeof SETS)[number];
+export type Kind = (typeof KINDS)[number];
+export type Tag = (typeof TAGS)[number];
 export type Split = "eval" | "sim";
 
+export const SHA1_RE = /^[0-9a-f]{40}$/;
 // Lowercase only, like config.UUID_RE in Python
 const MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export const LabelSchema = z.strictObject({
   file: z.string(), // relative to the set folder
-  sha1: z.string().regex(/^[0-9a-f]{40}$/),
+  sha1: z.string().regex(SHA1_RE),
   kind: z.enum(KINDS),
   mbid: z.string().regex(MBID_RE, "mbid must be a lowercase uuid").nullable(),
   tags: z.array(z.enum(TAGS)),

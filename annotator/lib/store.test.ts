@@ -17,13 +17,14 @@ function bigPng(): Promise<Buffer> {
 }
 
 describe("ingestImage", () => {
-  it("saves a JPEG at most 1600 px on its long side, named by the sha1 of its bytes", async () => {
+  it("saves a JPEG at most 1600 px on its long side, named by the sha1 of the uploaded bytes", async () => {
     const setDir = tempSetDir("gold");
-    const { sha1, file } = await ingestImage(setDir, await bigPng());
+    const png = await bigPng();
+    const { sha1, file } = await ingestImage(setDir, png);
 
     const saved = readFileSync(join(setDir, file));
+    expect(sha1).toBe(createHash("sha1").update(png).digest("hex"));
     expect(file).toBe(`photos/${sha1}.jpg`);
-    expect(createHash("sha1").update(saved).digest("hex")).toBe(sha1);
     expect(await sharp(saved).metadata()).toMatchObject({ format: "jpeg", width: 1600, height: 1067 });
   });
 

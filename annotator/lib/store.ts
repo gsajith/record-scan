@@ -9,20 +9,21 @@ import type { Label } from "./labels";
 const MAX_SIDE = 1600;
 
 /**
- * Save an image into <setDir>/photos/ as a JPEG named by the sha1 of the saved bytes.
- * Phone photos are turned upright from their EXIF orientation first. An image already
- * saved is left alone, so pasting the same photo twice gives the same record.
+ * Save an image into <setDir>/photos/ as an upright JPEG, at most 1600 px on its long side
+ * (sharp also drops EXIF, so no GPS). The name is the sha1 of the uploaded bytes, not the
+ * re-encoded ones, so a photo keeps its name and its split across sharp upgrades. An image
+ * already saved is left alone, so pasting the same photo twice gives the same record.
  */
 export async function ingestImage(setDir: string, input: Buffer): Promise<{ sha1: string; file: string }> {
-  const jpeg = await sharp(input)
-    .rotate()
-    .resize({ width: MAX_SIDE, height: MAX_SIDE, fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 90 })
-    .toBuffer();
-  const sha1 = createHash("sha1").update(jpeg).digest("hex");
+  const sha1 = createHash("sha1").update(input).digest("hex");
   const file = `photos/${sha1}.jpg`;
   const path = join(setDir, file);
   if (!existsSync(path)) {
+    const jpeg = await sharp(input)
+      .rotate()
+      .resize({ width: MAX_SIDE, height: MAX_SIDE, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 90 })
+      .toBuffer();
     mkdirSync(join(setDir, "photos"), { recursive: true });
     writeFileSync(path, jpeg);
   }

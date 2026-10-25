@@ -1,15 +1,18 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { KINDS, TAGS } from "@/lib/labels";
+import type { Release } from "@/lib/catalog";
+import { KINDS, TAGS, type Kind, type Tag } from "@/lib/labels";
 import styles from "./page.module.css";
 
 type Photo = { sha1: string; file: string };
-type Release = { mbid: string; title: string; artists: string[]; format: string | null; thumb: string };
-type Kind = (typeof KINDS)[number];
-type Tag = (typeof TAGS)[number];
+type Result = Release & { thumb: string };
 
 // Gold only for now; the wild set, with its source and license fields, comes next
 const SET = "gold";
+
+function firstImage(files: FileList | undefined): File | undefined {
+  return Array.from(files ?? []).find((f) => f.type.startsWith("image/"));
+}
 
 function errorText(body: unknown, fallback: string): string {
   return typeof body === "object" && body !== null && "error" in body ? String(body.error) : fallback;
@@ -22,9 +25,9 @@ export default function LabelerPage() {
   const [status, setStatus] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Release[]>([]);
+  const [results, setResults] = useState<Result[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [picked, setPicked] = useState<Release | null>(null);
+  const [picked, setPicked] = useState<Result | null>(null);
   const [kind, setKind] = useState<Kind>("positive");
   const [tags, setTags] = useState<Tag[]>([]);
   const [notes, setNotes] = useState("");
@@ -62,7 +65,7 @@ export default function LabelerPage() {
   // Paste an image from anywhere on the page
   useEffect(() => {
     function onPaste(e: ClipboardEvent) {
-      const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith("image/"));
+      const file = firstImage(e.clipboardData?.files);
       if (file) {
         e.preventDefault();
         ingest(file);
@@ -133,7 +136,7 @@ export default function LabelerPage() {
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
-        const file = Array.from(e.dataTransfer.files).find((f) => f.type.startsWith("image/"));
+        const file = firstImage(e.dataTransfer.files);
         if (file) ingest(file);
       }}
     >
