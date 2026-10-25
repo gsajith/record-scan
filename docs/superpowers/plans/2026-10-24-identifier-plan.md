@@ -223,9 +223,9 @@ def load_embedder(name: str, device: str | None = None, input_px: int | None = N
 def query_views(img: Image.Image) -> list[Image.Image]            # [center square crop, 10% tighter crop, gray-padded so the object fills 70%]; the report's three scales
 
 # embed.py   CLI: python -m pipeline.retrieval.embed --model NAME (--prefixes 00 01 | --all | --uuids FILE) [--source drive|shards] [--batch 64] [--workers 6] [--px 224]
-def embed_images(paths: list[Path], embedder: Embedder, batch: int, workers: int) -> tuple[list[str], np.ndarray]   # keyed by file stem (mbid); unreadable files logged to <out>/errors.log and skipped
-def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, source: str, batch: int, workers: int) -> int        # writes out_dir/<prefix>.npz once (uuids U36, embs float16) and <prefix>.done
-def pending_prefixes(out_dir: Path, source: str) -> list[str]
+def embed_images(paths: list[Path], embedder: Embedder, batch: int, workers: int, errors_log: Path) -> tuple[list[str], np.ndarray]   # keyed by file stem (mbid); unreadable files logged to errors_log and skipped
+def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, batch: int, workers: int) -> int        # writes out_dir/<prefix>.npz once (uuids U36, embs float16), <prefix>.errors.log and <prefix>.done; source param added with shards (Task 5)
+def pending_prefixes(out_dir: Path) -> list[str]                  # source param added with shards (Task 5)
 
 # build_index.py   CLI: python -m pipeline.retrieval.build_index --model NAME [--M 32] [--ef-construction 200]
 def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construction: int) -> int   # verifies dims; writes index.hnsw + labels.npy (U36)
@@ -255,6 +255,16 @@ Per-tag recall is reported with its count so a slice of three photos is visibly 
 - [ ] Step 1: Failing tests: `test_each_embedder_unit_vectors` (parametrized, `@pytest.mark.slow`, two fixture images, shape and norm; skips gated models when `HF_TOKEN` is unset with a clear message), `test_query_views_three_sizes`, `test_embed_prefix_skips_corrupt_and_resumes`, `test_build_index_and_identify_roundtrip` (synthetic vectors, duplicates collapse by album_key), `test_is_hit_rules`, `test_eval_report_metrics_and_slices` (hand-built rows), `test_load_eval_set_uses_eval_split_only`.
 - [ ] Step 2: Run, FAIL. Step 3: Implement. Step 4: all pass; smoke: build an index from the 2025-11 shards (`clip-vit-b-32-aug13`, allow_pickle, cast uuids) and identify a CAA `front-500` for a uuid in prefix 00.
 - [ ] Step 5: `git rm` the two old scripts. Commit `feat(pipeline): retrieval core with seven backbones, query views and slice eval`.
+
+Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_views`, `embed.py`, the `build_index.py` rewrite and `identify.py`, with their tests. The smoke run returned each of three prefix-00 covers first, and a phone photo of The Dark Side of the Moon came back first; numbers in `docs/results/2026-10-25-clip-baseline-smoke.md`. #16 (eval) and #18 (six more backbones) remain, so the steps above stay open. Notes for them:
+- The two old scripts were already removed in d3c1455, so Step 5 has nothing left to `git rm`.
+- CLIP loads as `ViT-B-32-quickgelu`, which matches how OpenAI trained the weights. The 2025-11 shards were built with plain `ViT-B-32` (GELU), so QuickGELU queries reach only 0.92 to 0.96 against their own covers. Never mix the two in one index.
+- `query_views` applies EXIF orientation first, so a portrait phone photo is not embedded sideways.
+- `identify` widens its search past k*10 neighbours when one big group, such as the 38 Abbey Road releases, fills them and fewer than k albums come back.
+- `embed.py` reads the drive only and has no `--source shards`, `--uuids` or `--px` yet. Tasks 5 and 7 add them along with their first callers. If the drive drops mid-prefix, it exits without marking the prefix done.
+- Deferred from the PR #37 review, both for when Task 5's shards remove the drive bottleneck: run `preprocess` in the decode workers instead of the main thread, and cache `album_key` lookups in `Identifier` for eval runs.
+- `identify` keeps an album with an empty title or artist key, such as Ed Sheeran's "+" and "÷", as its own group. The eval's hit rule (#16) has the same collision to decide on.
+- HNSW at the default `ef=128` returned the right top-1 album for 99.8% of 500 noisy queries on the 2025-11 index, with no gain up to `ef=1024`. Eval at 50k distractors can use exact search if that 0.2% matters.
 
 ### Task 5: the gallery pass (Step 1): shards, hashes, duplicate clusters
 
@@ -363,7 +373,7 @@ Nothing here is deleted by an agent. Each row names the task whose completion ma
 | Item under `~/Projects/record-scan-data` | Size | Removable after | Why |
 |---|---|---|---|
 | `metadata/uuid_to_metadata.json` | 840 MB | Task 1 (catalog.sqlite built, tests pass) | `Catalog` replaces it; regenerable from `slim_releases_with_covers.json` in a minute anyway |
-| `embeddings/clip-vit-b-32-aug13/` | 300 MB | Task 4 (its smoke test is the last reader) | November 2025 augmented shards; the one-vector design never uses them |
+| `embeddings/clip-vit-b-32-aug13/` | 1.1 GB with the smoke index | issue #15 (Task 4's CLIP smoke test was the last reader) | November 2025 augmented shards built with the GELU config; the one-vector design never uses them |
 | `_archive-album-annotator-2025-11/` | about 28 MB after cleanup | Task 3 (labeler merged) | the GitHub repo gsajith/album-annotator is archived and holds the same history |
 | `_archive-mbdump-2025-11/` | about 1.1 GB after cleanup, almost all `.git` | Task 6 (delta fetch merged) | the scripts are in `pipeline/legacy/`; only the August 2025 commit history remains here |
 | `~/.cache/clip` (1.2 GB), `~/.cache/torch/hub/checkpoints` (1.2 GB), HF `models--openai--clip-vit-base-patch32` (1.1 GB) | 3.5 GB | now | the OpenAI `clip` package, DINOv2 hub weights and transformers CLIP are not used by the new retrieval core |
