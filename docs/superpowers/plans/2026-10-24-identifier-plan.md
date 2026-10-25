@@ -171,7 +171,7 @@ Page flow: pick set (gold or wild); paste (Ctrl+V image or URL), drop files or U
 - [ ] Step 1: Failing vitest cases: `splitFor` against the same five-vector fixture Task 2 generated (copy the JSON into the test, or read it from `../pipeline/tests/fixtures/split_vectors.json`), `LabelSchema` rejects a wild label without license, accepts a gold label with `license: "own"`.
 - [ ] Step 2: Run, FAIL. Then implement routes and page; `npm run lint && npx tsc --noEmit && npx vitest run` clean.
 - [ ] Step 3: Manual check with `RS_DATA_DIR` pointing at a tmp folder: paste a cover image from the clipboard, search "abbey road", pick a release, save; the JSONL line validates with Python `load_labels`; a second label for the same image produces a second line and `load_labels` returns the newer one.
-- [ ] Step 4: `annotator/README.md` rewritten for the labeler: how to run, hotkeys, where files go, the license rule. Remove the Supabase sections.
+- [ ] Step 4: `annotator/README.md` rewritten for the labeler: how to run, hotkeys, where files go, the license rule. Remove the Supabase sections and the stale `../pipeline/detector/export_yolo_dataset.py` path (that script now lives in `pipeline/legacy/`). Also put double quotes around the `RS_IMAGE_ROOT` value in the root `.env.example` so the file loads with dotenv parsers and with `source` alike.
 - [ ] Step 5: Commit `feat(annotator): local labeler for gold and wild photo sets`.
 
 ### Task 4: retrieval core (embedders, index, identify, eval)
