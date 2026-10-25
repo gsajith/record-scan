@@ -48,6 +48,21 @@
 - **H6** Confirm or override D12 before Phase B.
 - **H7** Before Phase B: an account on one GPU provider (RunPod or Modal) with a small balance; the whole plan budgets under $100.
 
+## Part D: data folder items that become removable
+
+Nothing here is deleted by an agent. Each row names the task whose completion makes the item dead; after that task's review is clean, the controller lists the row in its report and Gautham deletes it.
+
+| Item under `~/Projects/record-scan-data` | Size | Removable after | Why |
+|---|---|---|---|
+| `metadata/uuid_to_metadata.json` | 840 MB | Task 1 (catalog.sqlite built, tests pass) | `Catalog` replaces it; regenerable from `slim_releases_with_covers.json` in a minute anyway |
+| `embeddings/clip-vit-b-32-aug13/` | 300 MB | Task 4 (its smoke test is the last reader) | November 2025 augmented shards; the one-vector design never uses them |
+| `_archive-album-annotator-2025-11/` | about 28 MB after cleanup | Task 3 (labeler merged) | the GitHub repo gsajith/album-annotator is archived and holds the same history |
+| `_archive-mbdump-2025-11/` | about 1.1 GB after cleanup, almost all `.git` | Task 6 (delta fetch merged) | the scripts are in `pipeline/legacy/`; only the August 2025 commit history remains here |
+| `~/.cache/clip` (1.2 GB), `~/.cache/torch/hub/checkpoints` (1.2 GB), HF `models--openai--clip-vit-base-patch32` (1.1 GB) | 3.5 GB | now | the OpenAI `clip` package, DINOv2 hub weights and transformers CLIP are not used by the new retrieval core |
+| HF `models--timm--vit_base_patch32_clip_224.openai` | 577 MB | keep | open_clip loads the `clip-vit-b-32` baseline from this cache |
+
+Already removed on 2026-10-24 at Gautham's request: `_archive-mbdump-2025-11/venv` (1.4 GB) and `_archive-album-annotator-2025-11/node_modules` (419 MB).
+
 ## Part C: layout added by this plan
 
 ```
