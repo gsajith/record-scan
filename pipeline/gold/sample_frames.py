@@ -4,6 +4,7 @@
 """
 
 import argparse
+import glob
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,24 +17,41 @@ VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v"}
 def sample_frames(video: Path, out_dir: Path, fps: float, max_frames: int) -> list[Path]:
     """Write up to max_frames JPEGs at fps frames per second as <video-stem>-NN.jpg."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    pattern = out_dir / f"{video.stem}-%02d.jpg"
+    # ffmpeg reads "%" in the output name as part of the sequence pattern, so double it
+    pattern = out_dir / f"{video.stem.replace('%', '%%')}-%02d.jpg"
     subprocess.run(
         ["ffmpeg", "-loglevel", "error", "-y", "-i", str(video), "-vf", f"fps={fps}",
          "-frames:v", str(max_frames), "-q:v", "2", str(pattern)],
         check=True,
     )
-    return sorted(out_dir.glob(f"{video.stem}-[0-9][0-9].jpg"))
+    return sorted(out_dir.glob(_frame_glob(video)))
+
+
+def _frame_glob(video: Path) -> str:
+    return f"{glob.escape(video.stem)}-[0-9][0-9].jpg"
 
 
 def process_inbox(set_dir: Path, fps: float, max_frames: int) -> int:
-    """Sample every video in set_dir/inbox into frames beside it, then move it to inbox/done/."""
+    """Sample every video in set_dir/inbox into frames beside it, then move it to inbox/done/.
+
+    Phone file names repeat, so a video whose name is already in done/, or whose frames are
+    already in the inbox, is skipped rather than overwriting them.
+    """
     inbox = set_dir / "inbox"
     done = inbox / "done"
     count = 0
     for video in sorted(p for p in inbox.iterdir() if p.suffix.lower() in VIDEO_SUFFIXES):
-        count += len(sample_frames(video, inbox, fps, max_frames))
+        target = done / video.name
+        if target.exists() or any(inbox.glob(_frame_glob(video))):
+            print(f"Skipped {video.name}: the name is already used. Rename it and run again.")
+            continue
+        frames = sample_frames(video, inbox, fps, max_frames)
+        if not frames:
+            print(f"Skipped {video.name}: ffmpeg wrote no frames.")
+            continue
+        count += len(frames)
         done.mkdir(exist_ok=True)
-        shutil.move(video, done / video.name)
+        shutil.move(video, target)
     return count
 
 
