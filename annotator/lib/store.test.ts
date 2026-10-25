@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -26,6 +27,20 @@ describe("ingestImage", () => {
     expect(sha1).toBe(createHash("sha1").update(png).digest("hex"));
     expect(file).toBe(`photos/${sha1}.jpg`);
     expect(await sharp(saved).metadata()).toMatchObject({ format: "jpeg", width: 1600, height: 1067 });
+  });
+
+  // iPhone photos are HEIC, which sharp's prebuilt binaries cannot decode; macOS can
+  it.skipIf(process.platform !== "darwin")("saves an iPhone HEIC photo as a JPEG", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "heic-"));
+    writeFileSync(join(dir, "in.png"), await bigPng());
+    execFileSync("sips", ["-s", "format", "heic", join(dir, "in.png"), "--out", join(dir, "in.heic")]);
+    const heic = readFileSync(join(dir, "in.heic"));
+
+    const setDir = tempSetDir("gold");
+    const { sha1, file } = await ingestImage(setDir, heic);
+
+    expect(sha1).toBe(createHash("sha1").update(heic).digest("hex"));
+    expect(await sharp(readFileSync(join(setDir, file))).metadata()).toMatchObject({ format: "jpeg", width: 1600 });
   });
 
   it("gives the same record when the same photo is pasted twice", async () => {

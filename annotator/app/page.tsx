@@ -10,8 +10,11 @@ type Result = Release & { thumb: string };
 // Gold only for now; the wild set, with its source and license fields, comes next
 const SET = "gold";
 
+// Browsers often give HEIC files no type, so the extension counts too
+const IMAGE_EXT = /\.(heic|heif)$/i;
+
 function firstImage(files: FileList | undefined): File | undefined {
-  return Array.from(files ?? []).find((f) => f.type.startsWith("image/"));
+  return Array.from(files ?? []).find((f) => f.type.startsWith("image/") || IMAGE_EXT.test(f.name));
 }
 
 function errorText(body: unknown, fallback: string): string {
@@ -151,7 +154,7 @@ export default function LabelerPage() {
               Choose a file
               <input
                 type="file"
-                accept="image/*"
+                accept="image/*,.heic,.heif"
                 hidden
                 onChange={(e) => {
                   const file = e.target.files?.[0];
