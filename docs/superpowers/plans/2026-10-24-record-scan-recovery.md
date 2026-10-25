@@ -291,6 +291,8 @@ def device() -> str                # "mps" if torch.backends.mps.is_available() 
 - [ ] Step 4: `cd pipeline && .venv/bin/pytest tests/test_config.py -v` passes. `grep -rn "/Volumes\|/Users/" pipeline --include=*.py` matches only `config.py`.
 - [ ] Step 5: Commit `refactor(pipeline): central config with fail-fast image root`.
 
+> **Superseded (2026-10-24, later the same day):** Tasks 4 to 13 below are replaced by `docs/superpowers/plans/2026-10-24-identifier-plan.md`, written from the research report `docs/research/reports/On device album cover retrieval 2026.md`. Tasks 1 to 3 are done and merged. Parts A to F stay as the project inventory and decision record. The text below is kept for history.
+
 ### Task 4: embedders and the embed script (one vector per image, resumable by prefix)
 
 **Files:**
