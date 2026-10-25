@@ -98,9 +98,9 @@ The app will be live within a minute on a vercel.app domain.
 
 ## 🔗 Integration with the Dataset Pipeline
 
-Images and labels saved through this app are exported into a YOLOv8 dataset using the script in the parent directory:
+Images and labels saved through this app are exported into a YOLOv8 dataset using the pipeline's exporter, relative to this folder:
 
-../export_yolo_dataset.py
+../pipeline/detector/export_yolo_dataset.py
 
 That script connects to Supabase, downloads all annotations and images, splits them into train/val folders, and writes YOLO label files automatically.
 
