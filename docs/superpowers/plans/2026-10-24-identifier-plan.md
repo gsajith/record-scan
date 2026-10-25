@@ -223,9 +223,9 @@ def load_embedder(name: str, device: str | None = None, input_px: int | None = N
 def query_views(img: Image.Image) -> list[Image.Image]            # [center square crop, 10% tighter crop, gray-padded so the object fills 70%]; the report's three scales
 
 # embed.py   CLI: python -m pipeline.retrieval.embed --model NAME (--prefixes 00 01 | --all | --uuids FILE) [--source drive|shards] [--batch 64] [--workers 6] [--px 224]
-def embed_images(paths: list[Path], embedder: Embedder, batch: int, workers: int) -> tuple[list[str], np.ndarray]   # keyed by file stem (mbid); unreadable files logged to <out>/errors.log and skipped
-def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, source: str, batch: int, workers: int) -> int        # writes out_dir/<prefix>.npz once (uuids U36, embs float16) and <prefix>.done
-def pending_prefixes(out_dir: Path, source: str) -> list[str]
+def embed_images(paths: list[Path], embedder: Embedder, batch: int, workers: int, errors_log: Path) -> tuple[list[str], np.ndarray]   # keyed by file stem (mbid); unreadable files logged to errors_log and skipped
+def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, batch: int, workers: int) -> int        # writes out_dir/<prefix>.npz once (uuids U36, embs float16), <prefix>.errors.log and <prefix>.done; source param added with shards (Task 5)
+def pending_prefixes(out_dir: Path) -> list[str]                  # source param added with shards (Task 5)
 
 # build_index.py   CLI: python -m pipeline.retrieval.build_index --model NAME [--M 32] [--ef-construction 200]
 def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construction: int) -> int   # verifies dims; writes index.hnsw + labels.npy (U36)
@@ -261,7 +261,9 @@ Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_vie
 - CLIP loads as `ViT-B-32-quickgelu`, which matches how OpenAI trained the weights. The 2025-11 shards were built with plain `ViT-B-32` (GELU), so QuickGELU queries reach only 0.92 to 0.96 against their own covers. Never mix the two in one index.
 - `query_views` applies EXIF orientation first, so a portrait phone photo is not embedded sideways.
 - `identify` widens its search past k*10 neighbours when one big group, such as the 38 Abbey Road releases, fills them and fewer than k albums come back.
-- `embed.py` reads the drive only and has no `--source shards`, `--uuids` or `--px` yet. Tasks 5 and 7 add them along with their first callers.
+- `embed.py` reads the drive only and has no `--source shards`, `--uuids` or `--px` yet. Tasks 5 and 7 add them along with their first callers. If the drive drops mid-prefix, it exits without marking the prefix done.
+- Deferred from the PR #37 review, both for when Task 5's shards remove the drive bottleneck: run `preprocess` in the decode workers instead of the main thread, and cache `album_key` lookups in `Identifier` for eval runs.
+- `identify` keeps an album with an empty title or artist key, such as Ed Sheeran's "+" and "÷", as its own group. The eval's hit rule (#16) has the same collision to decide on.
 - HNSW at the default `ef=128` returned the right top-1 album for 99.8% of 500 noisy queries on the 2025-11 index, with no gain up to `ef=1024`. Eval at 50k distractors can use exact search if that 0.2% matters.
 
 ### Task 5: the gallery pass (Step 1): shards, hashes, duplicate clusters

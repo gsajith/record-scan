@@ -126,3 +126,23 @@ def test_identify_widens_search_when_one_group_fills_the_neighbours(catalog, tmp
     matches = Identifier(FixedEmbedder(E0), tmp_path, catalog, clusters).identify(Image.new("RGB", (8, 8)), k=2, views=1)
 
     assert [m.mbid for m in matches][1:] == [DEBUT]
+
+
+def test_identify_keeps_albums_apart_when_titles_normalize_to_nothing(tmp_path):
+    # "+" and "÷" both normalize to an empty title, so their album keys collide
+    ed, plus, divide = "44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666"
+    (tmp_path / "releases.json").write_text(json.dumps([
+        {"title": "+", "id": plus, "artist_ids": [ed]},
+        {"title": "÷", "id": divide, "artist_ids": [ed]},
+    ]))
+    (tmp_path / "artists.json").write_text(json.dumps({ed: {"name": "Ed Sheeran"}}))
+    build(tmp_path / "releases.json", tmp_path / "artists.json", tmp_path / "catalog.sqlite", delta_dir=None)
+    np.savez(tmp_path / "00.npz", uuids=np.array([plus, divide], dtype="U36"),
+             embs=np.array([E0, unit([0.9, 0.44, 0, 0])], dtype=np.float16))
+    build_index([tmp_path / "00.npz"], 4, tmp_path, M=16, ef_construction=100)
+
+    matches = Identifier(FixedEmbedder(E0), tmp_path, Catalog(tmp_path / "catalog.sqlite")).identify(
+        Image.new("RGB", (8, 8)), k=2, views=1
+    )
+
+    assert [m.title for m in matches] == ["+", "÷"]

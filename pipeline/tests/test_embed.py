@@ -1,4 +1,7 @@
+import shutil
+
 import numpy as np
+import pytest
 from PIL import Image
 
 from pipeline.retrieval.embed import embed_prefix, pending_prefixes
@@ -52,7 +55,7 @@ def test_embed_prefix_skips_corrupt_and_resumes(tmp_path, reload_config):
     assert set(rows) == {RED, GREEN}
     np.testing.assert_allclose(rows[RED], [1, 0, 0], atol=0.02)
     np.testing.assert_allclose(rows[GREEN], [0, 1, 0], atol=0.02)
-    assert CORRUPT in (out / "errors.log").read_text()
+    assert CORRUPT in (out / "00.errors.log").read_text()
     assert not (out / "00.tmp.npz").exists()
 
     # The finished prefix is skipped on rerun; only 01 is left
@@ -60,3 +63,22 @@ def test_embed_prefix_skips_corrupt_and_resumes(tmp_path, reload_config):
     assert pending_prefixes(out) == ["01"]
     assert embed_prefix("00", embedder, out, batch=1, workers=2) == 0
     assert embedder.calls == calls
+
+
+def test_embed_prefix_refuses_to_finish_when_the_drive_drops(tmp_path, reload_config):
+    root = tmp_path / "images"
+    (root / "00").mkdir(parents=True)
+    for uuid in (RED, GREEN):
+        Image.new("RGB", (40, 40), (255, 0, 0)).save(root / "00" / f"{uuid}.jpg")
+    reload_config(RS_IMAGE_ROOT=root)
+    out = tmp_path / "emb"
+
+    class UnmountingEmbedder(MeanColorEmbedder):
+        def embed(self, images):
+            shutil.rmtree(root, ignore_errors=True)  # the drive goes away after the first batch
+            return super().embed(images)
+
+    with pytest.raises(SystemExit):
+        embed_prefix("00", UnmountingEmbedder(), out, batch=1, workers=1)
+    assert not (out / "00.done").exists()
+    assert not (out / "00.npz").exists()

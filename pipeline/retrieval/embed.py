@@ -4,7 +4,8 @@
 
 Writes config.EMB_DIR/<model>/<prefix>.npz (uuids U36, embs float16) and a <prefix>.done
 marker. A rerun skips finished prefixes; an interrupted prefix starts over. Unreadable
-files go to errors.log in the same folder and are skipped.
+files go to <prefix>.errors.log in the same folder and are skipped. If the drive goes away
+mid-prefix, the run exits without marking the prefix done.
 """
 
 import argparse
@@ -57,7 +58,7 @@ def embed_images(
 
 
 def _log_error(errors_log: Path, path: Path, err: Exception | str) -> None:
-    print(f"Skipped {path}: {err}")
+    tqdm.write(f"Skipped {path}: {err}")
     with errors_log.open("a") as f:
         f.write(f"{path}\t{err}\n")
 
@@ -69,7 +70,8 @@ def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, batch: int, wor
         return 0
     root = config.require_image_root()
     out_dir.mkdir(parents=True, exist_ok=True)
-    errors_log = out_dir / "errors.log"
+    errors_log = out_dir / f"{prefix}.errors.log"
+    errors_log.unlink(missing_ok=True)  # a restarted prefix logs its errors afresh
     paths = []
     for path in sorted((root / prefix).glob("*.jpg")):
         if config.is_uuid(path.stem):
@@ -77,6 +79,8 @@ def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, batch: int, wor
         else:
             _log_error(errors_log, path, "file name is not a release id")
     uuids, embs = embed_images(paths, embedder, batch, workers, errors_log)
+    # An unmounted drive makes every remaining file "unreadable"; don't save that as done
+    config.require_image_root()
     tmp = out_dir / f"{prefix}.tmp.npz"
     with tmp.open("wb") as f:  # a file handle stops numpy from appending another .npz
         np.savez(f, uuids=np.array(uuids, dtype="U36"), embs=embs.astype(np.float16))
@@ -106,6 +110,8 @@ def main() -> None:
     out_dir = config.EMB_DIR / embedder.name
     pending = pending_prefixes(out_dir)
     prefixes = pending if args.all else [p for p in args.prefixes if p in pending]
+    if skipped := [p for p in (args.prefixes or []) if p not in pending]:
+        print(f"Skipping {' '.join(skipped)}: already done or not a prefix folder on the drive")
     for prefix in prefixes:
         start = time.monotonic()
         n = embed_prefix(prefix, embedder, out_dir, args.batch, args.workers)

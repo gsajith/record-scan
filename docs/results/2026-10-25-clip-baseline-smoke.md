@@ -48,10 +48,33 @@ seed 0, k=50, compared against brute force over 329,960 vectors:
 | 256 | 0.998 | 2.8 |
 | 1024 | 0.998 | 8.8 |
 
+Produced by this script, run from the repo root with the pipeline venv:
+
+```python
+import numpy as np, hnswlib, time
+D = "/Users/gsajith/Projects/record-scan-data/embeddings/clip-vit-b-32-aug13"
+labels = np.load(D + "/labels.npy")
+e = np.concatenate([np.load(f"{D}/{p}.npz", allow_pickle=True)["embs"].astype(np.float32) for p in ["00", "01"]])
+e /= np.linalg.norm(e, axis=1, keepdims=True)
+rng = np.random.default_rng(0)
+q = e[rng.choice(len(e), 500, replace=False)] + rng.normal(0, 0.015, (500, 512)).astype(np.float32)
+q /= np.linalg.norm(q, axis=1, keepdims=True)
+truth = labels[np.argmax(q @ e.T, axis=1)]
+idx = hnswlib.Index(space="cosine", dim=512)
+idx.load_index(D + "/index.hnsw", max_elements=len(labels))
+for ef in (64, 128, 256, 512, 1024):
+    idx.set_ef(ef)
+    t = time.perf_counter()
+    ids, _ = idx.knn_query(q, k=50, num_threads=1)
+    ms = (time.perf_counter() - t) / len(q) * 1000
+    print(ef, np.mean(labels[ids[:, 0]] == truth), ms)
+```
+
 ## One phone photo
 
 Gautham's photo of The Dark Side of the Moon (12" vinyl, 01aa589c), shot on an iPhone and
-converted from HEIC with `sips`:
+converted from HEIC with `sips`, then run through
+`python -m pipeline.retrieval.identify IMG_9772.jpg --model clip-vit-b-32 [--views 1]`:
 
 | Views | Rank of true album | Its score | Next score |
 |---|---|---|---|

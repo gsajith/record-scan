@@ -44,23 +44,25 @@ class Identifier:
         self.ef = ef
         self.labels = np.load(index_dir / "labels.npy")
         self.index = hnswlib.Index(space="cosine", dim=embedder.dim)
-        self.index.load_index(str(index_dir / "index.hnsw"), max_elements=len(self.labels))
+        self.index.load_index(str(index_dir / "index.hnsw"))
+        # build_index swaps the two files one after the other, so a crash between can pair them wrong
+        if self.index.get_current_count() != len(self.labels):
+            raise SystemExit(f"{index_dir} has an index and labels of different sizes. Rerun build_index.")
 
     def identify(self, img: Image.Image, k: int = 5, views: int = 3) -> list[Match]:
         """Top k albums: k*10 neighbours per view, best score per group, one match per group.
 
         A group is the duplicate cluster when clusters are given, else the album (title plus
         primary artist), so reissues of one album take a single slot. When one big group fills
-        the neighbours and fewer than k groups come back, the search widens 4x and repeats.
+        the neighbours and fewer than k groups come back, the search widens 4x, at most three
+        times, and returns what it found.
         """
         vectors = self.embedder.embed(query_views(img)[:views])
-        neighbours = k * 10
-        while True:
-            neighbours = min(neighbours, len(self.labels))
+        for widening in range(4):
+            neighbours = min(k * 10 * 4**widening, len(self.labels))
             best = self._best_per_group(vectors, neighbours)
             if len(best) >= k or neighbours == len(self.labels):
                 break
-            neighbours *= 4
         top = sorted(best.values(), reverse=True)[:k]
         return [self._match(mbid, score) for score, mbid in top]
 
@@ -79,9 +81,12 @@ class Identifier:
         if self.clusters is not None:
             return self.clusters.get(mbid, mbid)
         try:
-            return self.catalog.album_key(mbid)
+            key = self.catalog.album_key(mbid)
         except KeyError:  # a cover without a catalog row stands alone
             return mbid
+        # "+" and "÷" both normalize to an empty title, and unknown artists to an empty name
+        title, artist = key.split("|", 1)
+        return key if title and artist else mbid
 
     def _match(self, mbid: str, score: float) -> Match:
         release = self.catalog.release(mbid)
