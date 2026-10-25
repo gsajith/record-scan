@@ -41,7 +41,7 @@
 
 ## Decisions
 
-- **D8 Labeler is local-only.** The `annotator/` app runs on the Mac, writes files under `RS_DATA_DIR`, and has no cloud backend. Couch use goes through Tailscale. Supabase code is removed. (Gautham, 2026-10-24.)
+- **D8 Labeler is local-only.** The `annotator/` app runs on the Mac, writes files under `RS_DATA_DIR`, and has no cloud backend. It listens on 127.0.0.1 only and refuses cross-site API calls; no Tailscale or other remote access (Gautham, 2026-10-25). Supabase code is removed. (Gautham, 2026-10-24.)
 - **D9 Candid internet photos are allowed for evaluation and simulator fitting, with a license filter and a one-time split.** Sources: Flickr Creative Commons, Wikimedia Commons, Pexels, Unsplash, Creative Commons YouTube frames. No Instagram, nothing unlicensed. Half (by hash) feeds simulator statistics and backgrounds; half is evaluation. Nothing from either half is used to train weights unless its license is CC0 or equivalent and Gautham says so.
 - **D10 Gallery working copy at 256 px short side, JPEG quality 90, in WebDataset tar shards keyed by MBID.** One pass over the drive produces it together with a 64-bit pHash per cover. Later steps read the shards, not the drive.
 - **D11 Catalog updates come from the Cover Art Archive's Internet Archive index, not from a new dump.** A monthly job lists items added or updated since the last run, downloads new front covers, and fetches metadata from the MusicBrainz web service. A full dump re-slim stays an annual job and is where the release-group id gets added.
@@ -189,11 +189,11 @@ export function splitFor(set: "gold" | "wild", sha1: string): "eval" | "sim"   /
 // API
 GET  /api/search?q=...&limit=20          -> { results: [{ mbid, title, artists, format, year?, thumb: "https://coverartarchive.org/release/<mbid>/front-250" }] }
 POST /api/ingest   multipart { set, file } | json { set, url, source_url, license }   -> { sha1, split, file }   // saves <set>/photos/<sha1>.jpg (re-encodes to JPEG, max side 1600), refuses a wild image without source_url + license, returns existing record if sha1 already present
-GET  /api/queue?set=gold                  -> { next: { file, sha1 } | null, remaining }   // unlabeled images in <set>/inbox/ and photos/ without a label line
+POST /api/queue   json { set, skip }      -> { next: { file, sha1, video } | null, remaining, counts }   // photos/ without a label line, then <set>/inbox/ frames (moved to inbox/done/); video lets the page keep the album within one recording; counts per set and split
 POST /api/label    json Label             -> { ok: true }   // validates with LabelSchema, split recomputed server-side, appends to <set>/labels.jsonl
 GET  /api/image/<set>/<sha1>              -> the JPEG (so the page can show local files)
 ```
-Page flow: pick set (gold or wild); paste (Ctrl+V image or URL), drop files or URLs, or press N for the next inbox item; image fills the left pane; right pane has the search box (debounced, results with thumbnails, arrow keys to move, Enter to pick), a kind toggle (positive, negative, unknown) with hotkeys P N U, tag checkboxes with hotkeys 1 to 9 and 0, license select and source field (prefilled from the drop when the browser provides it), notes, and Save (Enter). After Save the next item loads. A status strip shows counts per set and per split.
+Page flow: pick set (gold or wild); paste (Ctrl+V image or URL), drop files or URLs; the next unlabeled photo or inbox frame loads on open and after each save, and S skips one; image fills the left pane; right pane has the search box (debounced, results with thumbnails, arrow keys to move, Enter to pick), a kind toggle (positive, negative, unknown) with hotkeys P N U, tag checkboxes with hotkeys 1 to 9, 0, - and = (twelve tags), / to focus search, license select and source field (prefilled from the drop when the browser provides it), notes, and Save (Enter). After Save the next item loads; the picked album and kind carry over between frames of the same video and reset for a new one. A status strip shows counts per set and per split.
 
 - [ ] Step 1: Failing vitest cases: `splitFor` against the same five literal sha1 values as `SPLIT_VECTORS` in `pipeline/tests/test_labels.py`, `LabelSchema` rejects a wild label without license, accepts a gold label with `license: "own"`.
 - [ ] Step 2: Run, FAIL. Then implement routes and page; `npm run lint && npx tsc --noEmit && npx vitest run` clean.

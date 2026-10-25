@@ -6,7 +6,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import type { Label } from "./labels";
-import { appendLabel, ingestImage, NotAnImageError } from "./store";
+import { appendLabel, countLabels, ingestImage, NotAnImageError } from "./store";
 
 function tempSetDir(set: "gold" | "wild"): string {
   return join(mkdtempSync(join(tmpdir(), "labeler-")), set);
@@ -72,5 +72,52 @@ describe("appendLabel", () => {
 
     const lines = readFileSync(join(setDir, "labels.jsonl"), "utf8").trimEnd().split("\n");
     expect(lines.map((l) => JSON.parse(l))).toEqual([label, { ...label, tags: ["glare"], labeled_at: "2026-10-25T05:00:00Z" }]);
+  });
+});
+
+describe("appendLabel line separators", () => {
+  // Python's splitlines() also breaks on these, so they must never appear raw in a line
+  it("escapes U+2028, U+2029 and U+0085 so Python reads the note back as one line", () => {
+    const setDir = tempSetDir("gold");
+    const sha1 = "86f7e437faa5a7fce15d1ddcb9eaeaea377667b8";
+    const notes = "glare\u2028left\u2029corner\u0085here";
+    appendLabel(setDir, {
+      file: `photos/${sha1}.jpg`, sha1, kind: "negative", mbid: null, tags: [], source_url: null,
+      license: "own", split: "eval", notes, labeled_at: "2026-10-25T04:00:00Z",
+    });
+    const text = readFileSync(join(setDir, "labels.jsonl"), "utf8");
+    expect(text).not.toMatch(/[\u2028\u2029\u0085]/);
+    expect(JSON.parse(text).notes).toBe(notes);
+  });
+});
+
+describe("countLabels", () => {
+  // From SPLIT_VECTORS: the first lands in eval, the second in sim
+  const evalSha1 = "86f7e437faa5a7fce15d1ddcb9eaeaea377667b8";
+  const simSha1 = "e9d71f5ee7c92d6dc9e92ffdad17b8bd49418f98";
+  const wild = (sha1: string, split: "eval" | "sim", tags: Label["tags"] = []): Label => ({
+    file: `photos/${sha1}.jpg`, sha1, kind: "negative", mbid: null, tags, license: "cc0",
+    source_url: "https://example.com/photo", split, notes: "", labeled_at: "2026-10-25T04:00:00Z",
+  });
+
+  it("counts labeled photos per split, a re-labeled photo once", () => {
+    const setDir = tempSetDir("wild");
+    appendLabel(setDir, wild(evalSha1, "eval"));
+    appendLabel(setDir, wild(simSha1, "sim"));
+    appendLabel(setDir, wild(simSha1, "sim", ["glare"]));
+    expect(countLabels(setDir)).toEqual({ eval: 1, sim: 1 });
+  });
+
+  it("stops at a line the Python loader would reject, naming the line", () => {
+    const setDir = tempSetDir("wild");
+    appendLabel(setDir, wild(evalSha1, "eval"));
+    writeFileSync(join(setDir, "labels.jsonl"), JSON.stringify({ ...wild(simSha1, "sim"), tags: ["sparkles"] }) + "\n", {
+      flag: "a",
+    });
+    expect(() => countLabels(setDir)).toThrow(/line 2.*tags/);
+  });
+
+  it("counts nothing for a set with no labels yet", () => {
+    expect(countLabels(tempSetDir("gold"))).toEqual({ eval: 0, sim: 0 });
   });
 });
