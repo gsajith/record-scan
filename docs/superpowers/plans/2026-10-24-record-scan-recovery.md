@@ -212,7 +212,7 @@ Per the global rule, a repo of mine with no `commitlint.config.*` gets it before
 
 ### Task 2: restructure into the monorepo and move data out of git
 
-*Task 2 used `app/`; Task 2b renamed it to `web/` and folded the annotator in. The steps below are kept as executed.*
+*Task 2 was executed with `app/`; Task 2b renamed it to `web/` and folded the annotator in. Paths below show the current names.*
 
 Everything is a move or a copy. Nothing is deleted. Do this with the drive unmounted; nothing here touches it.
 
