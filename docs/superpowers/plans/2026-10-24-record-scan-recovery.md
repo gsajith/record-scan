@@ -159,7 +159,7 @@ Elsewhere on disk: nothing else related to this project was found under `~/Proje
 
 Recommendation first. The plan assumes the recommendation unless Gautham says otherwise (H4).
 
-- **D1 One repo.** Merge app and pipeline into `record-scan`. The annotator stays its own repo and moves out of the pipeline tree. Alternative: keep three repos and only fix paths. Recommendation: merge, because the split is what caused the confusion.
+- **D1 One repo.** Merge app and pipeline into `record-scan`. The annotator is folded in as `annotator/` (Task 2b). Its old checkout is archived under `record-scan-data/_archive-album-annotator-2025-11` and its GitHub repo is to be archived. Both web apps are temporary: `annotator/` until detector photos are gathered, `web/` until the native app exists. Alternative: keep three repos and only fix paths. Recommendation: merge, because the split is what caused the confusion.
 - **D2 One vector per image, no index-time augmentation.** See B3. Query-side test-time augmentation is a flag on `identify()`. Alternative: keep 3 or 4 augmentations, still about 25 GB of RAM. Recommendation: one.
 - **D3 The eval picks the model, not a default.** Candidates: open_clip ViT-B/32 (current), open_clip ViT-B/16, DINOv2 ViT-S/14. Instance retrieval of near-identical artwork usually favors DINOv2 or B/16 over B/32. Bar to pass before the full run: at least 90 percent top-5 and 75 percent top-1 album-level accuracy on the gold photos against 50k distractors. If no model passes, stop and report rather than embed 3.1M images.
 - **D4 Framing guide instead of a detector, for now.** The app shows a square guide, the user fills it with the sleeve, and `identify` uses the center square. The YOLO detector track is deferred until the eval shows crop error is the dominant failure. Its training data is gone with the expired Supabase project, so restarting it costs a fresh annotation session of 100 to 300 photos. Only pay that if the eval says so.
@@ -211,6 +211,8 @@ Per the global rule, a repo of mine with no `commitlint.config.*` gets it before
 - [ ] Step 4: Branch `chore/commitlint`, commit `chore: add commitlint and husky commit-msg hook`, push, `gh pr create`, merge, pull main.
 
 ### Task 2: restructure into the monorepo and move data out of git
+
+*Task 2 used `app/`; Task 2b renamed it to `web/` and folded the annotator in. The steps below are kept as executed.*
 
 Everything is a move or a copy. Nothing is deleted. Do this with the drive unmounted; nothing here touches it.
 
@@ -379,7 +381,7 @@ export async function findAlbum(title: string, artists: string[]): Promise<Deeze
 - [ ] Step 1: Rewrite the Deezer route to call `findAlbum` and return `DeezerAlbum | null`. Keep the path `/api/deezer/album` and add an `artists` query param (comma separated) so the deployed app keeps working. Remove the tab and encode the query.
 - [ ] Step 2: `page.tsx`: drop the unused imports, type the result as `DeezerAlbum`, run the Deezer search from the capture handler instead of an effect, keep the capture button and the widget iframe for now.
 - [ ] Step 3: `cd web && npm run lint && npx tsc --noEmit` clean. `npm run dev`, scan one record, confirm the Deezer widget still appears.
-- [ ] Step 4: Commit `refactor(app): typed deezer lookup and lint cleanup`.
+- [ ] Step 4: Commit `refactor(web): typed deezer lookup and lint cleanup`.
 
 ### Task 7: evaluation harness (code only; runs in Task 9)
 
@@ -480,7 +482,7 @@ Behavior: a "Start" tap (a user gesture) starts the camera and unlocks one `<aud
 - [ ] Step 1: Failing vitest cases for `shouldLock`: below threshold, one frame above, two frames above.
 - [ ] Step 2: Implement the route, `scanner.ts` and the page changes.
 - [ ] Step 3: `cd web && npm run lint && npx tsc --noEmit && npx vitest run` clean. Manual test on the phone over Tailscale or cloudflared with the Task 12 service running: a record locks within about 3 seconds and audio plays; a blank wall never locks; with `RETRIEVAL_URL` unset the GPT fallback still identifies.
-- [ ] Step 4: Commit `feat(app): continuous scanning with local retrieval and preview playback`. Then H5b.
+- [ ] Step 4: Commit `feat(web): continuous scanning with local retrieval and preview playback`. Then H5b.
 
 ## Phase 4: deferred tracks (do not start without a new decision)
 
