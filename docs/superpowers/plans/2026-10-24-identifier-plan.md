@@ -256,7 +256,7 @@ Per-tag recall is reported with its count so a slice of three photos is visibly 
 - [ ] Step 2: Run, FAIL. Step 3: Implement. Step 4: all pass; smoke: build an index from the 2025-11 shards (`clip-vit-b-32-aug13`, allow_pickle, cast uuids) and identify a CAA `front-500` for a uuid in prefix 00.
 - [ ] Step 5: `git rm` the two old scripts. Commit `feat(pipeline): retrieval core with seven backbones, query views and slice eval`.
 
-Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_views`, `embed.py`, the `build_index.py` rewrite and `identify.py`, with their tests. The smoke run returned each of three prefix-00 covers first. #16 (eval) and #18 (six more backbones) remain, so the steps above stay open. Notes for them:
+Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_views`, `embed.py`, the `build_index.py` rewrite and `identify.py`, with their tests. The smoke run returned each of three prefix-00 covers first, and a phone photo of The Dark Side of the Moon came back first; numbers in `docs/results/2026-10-25-clip-baseline-smoke.md`. #16 (eval) and #18 (six more backbones) remain, so the steps above stay open. Notes for them:
 - The two old scripts were already removed in d3c1455, so Step 5 has nothing left to `git rm`.
 - CLIP loads as `ViT-B-32-quickgelu`, which matches how OpenAI trained the weights. The 2025-11 shards were built with plain `ViT-B-32` (GELU), so QuickGELU queries reach only 0.92 to 0.96 against their own covers. Never mix the two in one index.
 - `query_views` applies EXIF orientation first, so a portrait phone photo is not embedded sideways.
