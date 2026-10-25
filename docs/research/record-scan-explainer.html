@@ -1,0 +1,502 @@
+<title>Record Scan explained</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one long reading column with full-width figure bands; the sleeve-label blue is the one accent, orange marks "your photo" only. */
+:root {
+  --bg: #f4f5f8;
+  --surface: #ffffff;
+  --fg: #171a21;
+  --muted: #5d6578;
+  --line: #d6dae3;
+  --accent: #1d4ed8;
+  --accent-soft: #e2e8fb;
+  --photo: #d8621c;
+  --photo-soft: #fbe7da;
+  --font-display: "Bricolage Grotesque", "Avenir Next Condensed", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Source Sans 3", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1218; --surface: #171b24; --fg: #e8eaf1; --muted: #9aa3b8; --line: #2b3242;
+    --accent: #7e9bff; --accent-soft: #1b2544; --photo: #ff9a5f; --photo-soft: #3b2415;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1218; --surface: #171b24; --fg: #e8eaf1; --muted: #9aa3b8; --line: #2b3242;
+  --accent: #7e9bff; --accent-soft: #1b2544; --photo: #ff9a5f; --photo-soft: #3b2415;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 1.0625rem; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 4rem;
+}
+.wrap { max-width: 68rem; margin: 0 auto; }
+.prose { max-width: 65ch; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.1; margin: 0; }
+h1 { font-size: clamp(2.2rem, 5vw, 3.6rem); font-weight: 800; letter-spacing: -0.02em; }
+h2 { font-size: clamp(1.6rem, 3vw, 2.2rem); font-weight: 700; letter-spacing: -0.01em; }
+h3 { font-size: 1.2rem; font-weight: 700; }
+p { margin: 0; }
+a { color: var(--accent); }
+.eyebrow { font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+header.hero { padding-block: 3.5rem 2.5rem; display: grid; gap: 1.25rem; }
+header.hero .lede { font-size: 1.25rem; max-width: 60ch; color: var(--fg); }
+header.hero .disc { display: flex; align-items: center; gap: 1rem; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.95rem; padding-block: 0.75rem 0; border-top: 1px solid var(--line); }
+nav.toc a { text-decoration: none; color: var(--muted); }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); text-decoration: underline; }
+section { padding-block: 3rem 0; display: grid; gap: 1.25rem; }
+section > .prose { display: grid; gap: 1rem; }
+figure { margin: 0; display: grid; gap: 0.6rem; }
+figure svg { max-width: 100%; height: auto; display: block; }
+.band { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem; overflow-x: auto; }
+figcaption { font-size: 0.95rem; color: var(--muted); max-width: 70ch; }
+.callout { background: var(--accent-soft); border-radius: 12px; padding: 1.1rem 1.25rem; display: grid; gap: 0.5rem; max-width: 65ch; }
+.callout h3 { font-size: 1.05rem; }
+.grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; display: grid; gap: 0.35rem; align-content: start; min-width: 0; }
+.tile .big { font-family: var(--font-display); font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.tile .lbl { color: var(--muted); font-size: 0.95rem; }
+ul.plain { margin: 0; padding-left: 1.2rem; display: grid; gap: 0.5rem; }
+dl.gloss { margin: 0; display: grid; gap: 0.9rem; max-width: 65ch; }
+dl.gloss dt { font-weight: 600; }
+dl.gloss dd { margin: 0; color: var(--fg); }
+/* roadmap */
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; position: relative; }
+ol.steps li { display: grid; grid-template-columns: 3.25rem 1fr; gap: 0 1rem; padding-block: 1.1rem; border-top: 1px solid var(--line); min-width: 0; }
+ol.steps li:last-child { border-bottom: 1px solid var(--line); }
+ol.steps .n { font-family: var(--font-display); font-weight: 800; font-size: 1.6rem; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; padding-top: 0.1rem; }
+ol.steps .body { display: grid; gap: 0.35rem; min-width: 0; }
+ol.steps h3 { font-size: 1.1rem; }
+ol.steps .gate { color: var(--muted); font-size: 0.98rem; }
+ol.steps .gate b { color: var(--fg); font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.2rem; }
+.chip { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid var(--line); border-radius: 999px; padding: 0.15rem 0.55rem; color: var(--muted); }
+.chip.gpu { border-color: var(--accent); color: var(--accent); }
+.chip.you { border-color: var(--photo); color: var(--photo); }
+.phase { font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding-block: 1.5rem 0.5rem; }
+/* chart */
+.chart-wrap { display: grid; gap: 0.5rem; }
+.bar:hover rect, .bar:focus rect { opacity: 1; }
+.src { font-size: 0.9rem; color: var(--muted); }
+footer { padding-block: 3rem 0; color: var(--muted); font-size: 0.95rem; display: grid; gap: 0.5rem; max-width: 70ch; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 640px) {
+  ol.steps li { grid-template-columns: 2.5rem 1fr; }
+  header.hero { padding-block: 2.5rem 1.5rem; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .disc svg { animation: spin 14s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+}
+</style>
+
+<div class="wrap">
+<header class="hero">
+  <div class="eyebrow">Record Scan · project explainer · 24 October 2026</div>
+  <div class="disc">
+    <svg width="56" height="56" viewBox="0 0 56 56" role="img" aria-label="A vinyl record">
+      <circle cx="28" cy="28" r="27" fill="#171a21"/>
+      <circle cx="28" cy="28" r="22" fill="none" stroke="#3a3f4a" stroke-width="1"/>
+      <circle cx="28" cy="28" r="17" fill="none" stroke="#3a3f4a" stroke-width="1"/>
+      <circle cx="28" cy="28" r="9" fill="#1d4ed8"/>
+      <circle cx="28" cy="28" r="1.8" fill="#f4f5f8"/>
+    </svg>
+    <h1>Teaching a phone to recognize a record</h1>
+  </div>
+  <p class="lede">Point your phone at a record sleeve. Within about a second it should name the album and play thirty seconds of it. This page explains where the project stands, what the first attempt got wrong, and the twelve steps that lead to a phone app. It assumes no machine-learning background.</p>
+  <nav class="toc" aria-label="Sections">
+    <a href="#now">Where we are</a>
+    <a href="#points">Pictures as points</a>
+    <a href="#wrong">What went wrong</a>
+    <a href="#teach">Teach the model</a>
+    <a href="#brain">Which model</a>
+    <a href="#phone">On the phone</a>
+    <a href="#hardware">Phone hardware</a>
+    <a href="#steps">The twelve steps</a>
+    <a href="#unknown">Unknowns</a>
+    <a href="#glossary">Glossary</a>
+  </nav>
+</header>
+
+<section id="now">
+  <h2>Where we are</h2>
+  <div class="grid">
+    <div class="tile"><div class="big num">3.13M</div><div class="lbl">cover images, about 250 GB, one per MusicBrainz release, on an external drive</div></div>
+    <div class="tile"><div class="big num">673k</div><div class="lbl">artists, plus titles and formats for every release, in 2.3 GB of JSON</div></div>
+    <div class="tile"><div class="big num">0.8%</div><div class="lbl">of the gallery the November 2025 attempt managed to index before it stalled</div></div>
+    <div class="tile"><div class="big num">1</div><div class="lbl">working prototype: a web page that sends the photo to GPT and plays a Deezer preview</div></div>
+  </div>
+  <div class="prose">
+    <p>The raw material is in good shape. Over three days in August 2025 the pipeline downloaded a front cover for almost every MusicBrainz release that has one, and kept the title and artist for each. That is the catalog the app will match against.</p>
+    <p>The prototype works end to end but it asks a large language model to look at each photo, which costs money per scan and takes a few seconds. It is a stand-in. The real job is to build our own identifier that runs on the phone, which is what the rest of this page is about.</p>
+    <p>This week the code was consolidated into one repository, the data was moved out of git, and the pipeline was given a configuration layer and tests. The research report this page summarizes was written on 24 October 2026.</p>
+  </div>
+</section>
+
+<section id="points">
+  <h2>The core idea: pictures as points</h2>
+  <div class="prose">
+    <p>A recognition model does not "look things up". It turns every image into a list of a few hundred numbers. Think of that list as coordinates: each image becomes a point in a very high-dimensional space. The model is trained so that images that look alike land close together and images that look different land far apart.</p>
+    <p>That turns identification into geometry. We run all 3 million covers through the model once and store their points. When you take a photo, it becomes a point too, and the answer is simply the stored point nearest to it.</p>
+  </div>
+  <figure>
+    <div class="band">
+      <svg viewBox="0 0 680 300" role="img" aria-label="Scatter of cover points in embedding space; a photo point lands next to its matching cover point" style="min-width: 520px">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        </defs>
+        <g fill="currentColor" opacity="0.28">
+          <circle cx="92" cy="88" r="4"/><circle cx="118" cy="70" r="4"/><circle cx="140" cy="104" r="4"/><circle cx="106" cy="126" r="4"/><circle cx="160" cy="80" r="4"/><circle cx="130" cy="140" r="4"/>
+          <circle cx="330" cy="230" r="4"/><circle cx="356" cy="214" r="4"/><circle cx="372" cy="250" r="4"/><circle cx="346" cy="262" r="4"/><circle cx="392" cy="228" r="4"/><circle cx="316" cy="252" r="4"/>
+          <circle cx="560" cy="110" r="4"/><circle cx="582" cy="92" r="4"/><circle cx="596" cy="130" r="4"/><circle cx="548" cy="140" r="4"/><circle cx="612" cy="108" r="4"/>
+          <circle cx="250" cy="60" r="4"/><circle cx="460" cy="70" r="4"/><circle cx="220" cy="200" r="4"/><circle cx="480" cy="190" r="4"/><circle cx="60" cy="230" r="4"/><circle cx="640" cy="230" r="4"/>
+        </g>
+        <text x="120" y="172" font-size="12" text-anchor="middle" fill="currentColor" opacity="0.7">jazz covers with blue sleeves</text>
+        <text x="354" y="292" font-size="12" text-anchor="middle" fill="currentColor" opacity="0.7">portraits on black</text>
+        <text x="580" y="166" font-size="12" text-anchor="middle" fill="currentColor" opacity="0.7">bright pop art</text>
+        <circle cx="258" cy="150" r="7" fill="var(--accent)"/>
+        <text x="258" y="130" font-size="12" text-anchor="middle" fill="currentColor">stored point: the clean cover</text>
+        <circle cx="300" cy="166" r="7" fill="var(--photo)"/>
+        <text x="312" y="192" font-size="12" text-anchor="start" fill="currentColor">your photo of it</text>
+        <line x1="294" y1="163" x2="268" y2="154" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+        <text x="236" y="212" font-size="11" text-anchor="start" fill="currentColor" opacity="0.7">nearest stored point wins</text>
+        <circle cx="279" cy="158" r="40" fill="none" stroke="currentColor" stroke-dasharray="4 4" opacity="0.5"/>
+      </svg>
+    </div>
+    <figcaption>Every cover is a stored point. A phone photo becomes a new point, and the app answers with whichever stored point is closest. Tilt, glare and blur move the photo's point away from the cover's point; the whole engineering problem is keeping that distance small.</figcaption>
+  </figure>
+</section>
+
+<section id="wrong">
+  <h2>What went wrong last time</h2>
+  <div class="prose">
+    <p>Photos are messy. A tilted sleeve under a lamp does not look like the clean image in the catalog, so its point lands some distance away. The November 2025 design tried to fix that on the storage side: for every cover it stored not one point but 13.6 on average, one for each fake variation (rotated, skewed, brightened, blurred). The hope was that a real photo would land near at least one of them.</p>
+    <p>The arithmetic kills it. 3.13 million covers times 13.6 variations is 42.5 million points. Held in memory in the structure that makes nearest-neighbor search fast, that is roughly 100 GB. The Mac doing the work has 64 GB. A phone has a small fraction of that.</p>
+  </div>
+  <figure>
+    <div class="band">
+      <svg viewBox="0 0 680 190" role="img" aria-label="Bar lengths to scale: old plan about 100 GB, Mac RAM 64 GB, new plan 7.5 GB, phone index 0.2 GB" style="min-width: 520px">
+        <g font-size="12" fill="currentColor">
+          <text x="0" y="30">Old plan, 42.5M points</text>
+          <rect x="0" y="36" width="560" height="18" rx="3" fill="var(--photo)" opacity="0.85"/>
+          <text x="566" y="50" class="num">about 100 GB</text>
+          <text x="0" y="86">New plan, 3.1M points</text>
+          <rect x="0" y="92" width="42" height="18" rx="3" fill="var(--accent)"/>
+          <text x="50" y="106" class="num">about 7.5 GB</text>
+          <text x="0" y="142">Compressed index for the phone</text>
+          <rect x="0" y="148" width="3" height="18" rx="1" fill="var(--accent)"/>
+          <text x="10" y="162" class="num">about 0.2 GB</text>
+        </g>
+        <line x1="358" y1="20" x2="358" y2="176" stroke="currentColor" stroke-dasharray="5 4" opacity="0.6"/>
+        <text x="364" y="18" font-size="11" fill="currentColor" opacity="0.8">the Mac's 64 GB of RAM</text>
+      </svg>
+    </div>
+    <figcaption>Drawn to one scale. The old plan needed more memory than the machine had before it got past one percent of the gallery. One point per cover fits easily, and a compressed index fits on a phone.</figcaption>
+  </figure>
+</section>
+
+<section id="teach">
+  <h2>The new idea: teach the model, not the index</h2>
+  <div class="prose">
+    <p>Store exactly one point per cover, the clean one. Put all the tolerance for tilt, glare and blur into the model instead, so that a messy photo of a sleeve lands on the clean cover's point by itself. The report calls this moving the work "from the gallery side to the query side", and it is the single biggest change in the plan.</p>
+    <p>How do you teach a model to ignore glare? By showing it millions of examples where the only difference between two images is glare. We do not own millions of real phone photos of records, but we own 3 million clean covers, and a few lines of code can turn any clean cover into a plausible fake phone photo: tilt it, add a bright streak, darken one corner, blur it slightly, drop it onto a shelf background.</p>
+  </div>
+  <figure>
+    <div class="band">
+      <svg viewBox="0 0 860 280" role="img" aria-label="Training loop: a clean cover is turned into a fake phone photo by a simulator; both pass through the model; their points are pulled together while other covers are pushed away" style="min-width: 640px">
+        <defs>
+          <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        </defs>
+        <g font-size="12" fill="currentColor">
+          <rect x="30" y="70" width="110" height="110" rx="4" fill="var(--accent-soft)" stroke="currentColor"/>
+          <circle cx="85" cy="125" r="30" fill="var(--accent)"/>
+          <text x="85" y="206" text-anchor="middle">clean cover (from the catalog)</text>
+
+          <line x1="150" y1="125" x2="226" y2="125" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr2)"/>
+          <text x="188" y="100" text-anchor="middle" font-size="11">simulator</text>
+          <text x="188" y="114" text-anchor="middle" font-size="11" opacity="0.7">random each time</text>
+
+          <rect x="236" y="54" width="160" height="150" rx="4" fill="currentColor" opacity="0.08"/>
+          <polygon points="262,80 372,70 366,186 254,172" fill="var(--accent-soft)" stroke="currentColor"/>
+          <circle cx="314" cy="128" r="30" fill="var(--accent)"/>
+          <ellipse cx="290" cy="96" rx="34" ry="12" fill="#ffffff" opacity="0.7" transform="rotate(-25 290 96)"/>
+          <polygon points="254,172 366,186 372,70 360,180" fill="currentColor" opacity="0.12"/>
+          <text x="316" y="226" text-anchor="middle">fake phone photo</text>
+          <text x="316" y="242" text-anchor="middle" font-size="11" opacity="0.7">tilt, glare, shadow, blur, shelf behind it</text>
+
+          <line x1="140" y1="150" x2="455" y2="150" stroke="currentColor" stroke-width="1" opacity="0" />
+          <path d="M 85 70 C 85 20, 470 20, 470 92" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr2)"/>
+          <line x1="406" y1="125" x2="455" y2="125" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr2)"/>
+          <text x="432" y="112" text-anchor="middle" font-size="11">embed</text>
+          <text x="290" y="34" text-anchor="middle" font-size="11">embed</text>
+
+          <rect x="465" y="92" width="120" height="66" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+          <text x="525" y="121" text-anchor="middle" font-weight="600">the model</text>
+          <text x="525" y="139" text-anchor="middle" font-size="11" opacity="0.7">same weights for both</text>
+
+          <line x1="585" y1="125" x2="640" y2="125" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+          <circle cx="686" cy="118" r="7" fill="var(--accent)"/>
+          <circle cx="716" cy="134" r="7" fill="var(--photo)"/>
+          <line x1="693" y1="122" x2="709" y2="130" stroke="currentColor" stroke-width="2" marker-start="url(#arr2)" marker-end="url(#arr2)"/>
+          <text x="700" y="100" text-anchor="middle" font-size="11">pull together</text>
+          <circle cx="800" cy="70" r="5" fill="currentColor" opacity="0.4"/>
+          <circle cx="820" cy="190" r="5" fill="currentColor" opacity="0.4"/>
+          <circle cx="770" cy="214" r="5" fill="currentColor" opacity="0.4"/>
+          <line x1="724" y1="126" x2="786" y2="80" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arr2)"/>
+          <line x1="724" y1="140" x2="806" y2="182" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arr2)"/>
+          <text x="800" y="238" text-anchor="middle" font-size="11">push other covers apart</text>
+          <text x="708" y="164" text-anchor="middle" font-size="11" opacity="0.7">the loss score</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>One training step. The simulator makes a fresh fake photo of a cover, the model turns both images into points, and the training rule nudges the model's weights so the two points move closer and unrelated covers move away. Repeat tens of millions of times with different covers and different random edits.</figcaption>
+  </figure>
+  <div class="callout">
+    <h3>Why that generalizes to real photos</h3>
+    <p>The model never stores any of the fake photos. It has no slot to keep them in. The only thing that changes during training is one shared set of weights, and the only way the score keeps improving across millions of different covers and different random edits is for those weights to learn general operations: undo a tilt, ignore a bright streak, discount the background. Tilt is tilt whatever artwork is under it, so a tolerance learned on one cover applies to every cover, including ones the model never saw. Face recognition works the same way: trained on millions of people under varying light, it recognizes a new face in new light because "lighting" became something the weights cancel out.</p>
+  </div>
+  <div class="prose">
+    <h3>Three levels of effort, used only as needed</h3>
+    <ul class="plain">
+      <li><b>Frozen.</b> Use a published model exactly as it comes. Costs nothing, and if it is already good enough on real photos the plan skips training entirely.</li>
+      <li><b>Head.</b> Keep the model frozen and train a small adapter on top of its output. Runs on the Mac in hours. Also tells us whether a full fine-tune has room to help.</li>
+      <li><b>Fine-tune, then distill.</b> Retrain the big model on the fake-photo pairs (a few hours of rented GPU, about $10 to $60), then teach a much smaller "student" model to copy its answers so it can run on a phone in about 10 milliseconds ($2 to $15).</li>
+    </ul>
+    <p>Two safety rules carry through all three. Covers that are pixel-identical across several releases are grouped first, so the training never tries to push identical art apart. And your real photos never enter training; they are the only honest test of whether any of this worked.</p>
+  </div>
+</section>
+
+<section id="brain">
+  <h2>Which model to start with</h2>
+  <div class="prose">
+    <p>Several published models can serve as the starting point. The research compared them on a standard test of recognizing the same object across different photos, where higher is better. Nothing newer than these appeared between November 2025 and now; the old pipeline simply never tried them.</p>
+  </div>
+  <figure class="chart-wrap">
+    <div class="band">
+      <svg viewBox="0 0 680 330" role="img" aria-label="Bar chart of retrieval accuracy on the Revisited Oxford Hard benchmark: DINOv3 B/16 58.5, DINOv3 S+/16 50.0, DINOv3 S/16 49.5, DINOv2 S 39.5, SigLIP 2 B 20.2, Perception Encoder Core B 20.2" style="min-width: 520px">
+        <g font-size="11" fill="currentColor" opacity="0.5">
+          <line x1="210" y1="20" x2="210" y2="282" stroke="currentColor" stroke-width="1"/>
+          <line x1="350" y1="20" x2="350" y2="282" stroke="currentColor" stroke-width="0.5" stroke-dasharray="3 3"/>
+          <line x1="490" y1="20" x2="490" y2="282" stroke="currentColor" stroke-width="0.5" stroke-dasharray="3 3"/>
+          <line x1="630" y1="20" x2="630" y2="282" stroke="currentColor" stroke-width="0.5" stroke-dasharray="3 3"/>
+          <text x="210" y="300" text-anchor="middle" class="num">0</text>
+          <text x="350" y="300" text-anchor="middle" class="num">20</text>
+          <text x="490" y="300" text-anchor="middle" class="num">40</text>
+          <text x="630" y="300" text-anchor="middle" class="num">60</text>
+          <text x="420" y="322" text-anchor="middle">mean average precision, higher is better</text>
+        </g>
+        <g font-size="12" fill="currentColor">
+          <g class="bar" tabindex="0"><title>DINOv3 ViT-B/16, 86M parameters: 58.5</title>
+            <text x="200" y="46" text-anchor="end">DINOv3 ViT-B/16</text>
+            <rect x="210" y="32" width="409.5" height="20" rx="3" fill="var(--accent)" opacity="0.85"/>
+            <text x="626" y="46" class="num" text-anchor="start" opacity="0">58.5</text>
+            <text x="612" y="46" class="num" text-anchor="end" fill="#ffffff">58.5</text>
+          </g>
+          <g class="bar" tabindex="0"><title>DINOv3 ViT-S+/16, 29M parameters, recommended teacher candidate: 50.0</title>
+            <text x="200" y="88" text-anchor="end">DINOv3 ViT-S+/16</text>
+            <rect x="210" y="74" width="350" height="20" rx="3" fill="var(--accent)"/>
+            <text x="552" y="88" class="num" text-anchor="end" fill="#ffffff">50.0</text>
+            <text x="568" y="88" font-size="11" opacity="0.8">first candidate</text>
+          </g>
+          <g class="bar" tabindex="0"><title>DINOv3 ViT-S/16, 21M parameters, phone-sized: 49.5</title>
+            <text x="200" y="130" text-anchor="end">DINOv3 ViT-S/16</text>
+            <rect x="210" y="116" width="346.5" height="20" rx="3" fill="var(--accent)" opacity="0.85"/>
+            <text x="549" y="130" class="num" text-anchor="end" fill="#ffffff">49.5</text>
+          </g>
+          <g class="bar" tabindex="0"><title>DINOv2 ViT-S/14: 39.5</title>
+            <text x="200" y="172" text-anchor="end">DINOv2 ViT-S/14</text>
+            <rect x="210" y="158" width="276.5" height="20" rx="3" fill="var(--accent)" opacity="0.55"/>
+            <text x="479" y="172" class="num" text-anchor="end" fill="#ffffff">39.5</text>
+          </g>
+          <g class="bar" tabindex="0"><title>SigLIP 2 B/16, a vision-language model: 20.2</title>
+            <text x="200" y="214" text-anchor="end">SigLIP 2 B/16</text>
+            <rect x="210" y="200" width="141.4" height="20" rx="3" fill="var(--accent)" opacity="0.55"/>
+            <text x="344" y="214" class="num" text-anchor="end" fill="#ffffff">20.2</text>
+          </g>
+          <g class="bar" tabindex="0"><title>Perception Encoder Core B: 20.2</title>
+            <text x="200" y="256" text-anchor="end">PE-Core B/16</text>
+            <rect x="210" y="242" width="141.4" height="20" rx="3" fill="var(--accent)" opacity="0.55"/>
+            <text x="344" y="256" class="num" text-anchor="end" fill="#ffffff">20.2</text>
+          </g>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Revisited Oxford "Hard" split, frozen features, from Table 14 of the DINOv3 paper (arXiv 2508.10104). The same family leads on artwork and product tests too: on the mini-ILIAS instance-retrieval benchmark, frozen DINOv3-B scores 26.4 where the project's old CLIP ViT-B/32 family scores 5.9. These are public benchmarks, not our covers; Step 2 below measures the real thing.</figcaption>
+  </figure>
+  <div class="prose">
+    <p><b>Why DINOv3.</b> It was trained to tell instances apart without text labels, which is exactly the skill matching a specific artwork needs, and Meta published small distilled versions (21M and 29M parameters) that are phone-sized. Its license allows shipping the weights in an app as long as the license text is bundled.</p>
+    <p><b>Why keep one vision-language model in the race.</b> Models like SigLIP 2 learned from captions, so they can read text in images. DINOv3 cannot read. Some covers are mostly typography, and many reissues share artwork and differ only in a printed line, so a reading model might win on that slice. Rather than argue about how many covers are "text-heavy", the evaluation reports that slice separately and the data decides.</p>
+  </div>
+</section>
+
+<section id="phone">
+  <h2>How it runs on your phone</h2>
+  <div class="prose">
+    <p>Measured numbers from 2025 and 2026 phones settle one worry: turning a photo into a point is fast. A model of the size we are considering runs in 10 to 21 milliseconds on recent Snapdragon chips, and Apple reports similar figures for its own small encoders. Searching 3 million stored points is the part a phone struggles with, so the plan starts with the search on a server and moves it onto the phone only once a compressed index proves it loses almost nothing.</p>
+  </div>
+  <figure>
+    <div class="band">
+      <svg viewBox="0 0 940 300" role="img" aria-label="Pipeline: camera frame with square guide, crop, small model on the phone producing a 512-byte vector, server searches 3 million points, match plus Deezer preview; a dashed later path keeps a compressed index on the phone" style="min-width: 720px">
+        <defs>
+          <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        </defs>
+        <g font-size="12" fill="currentColor">
+          <rect x="20" y="40" width="560" height="150" rx="12" fill="none" stroke="currentColor" stroke-dasharray="6 4" opacity="0.6"/>
+          <text x="34" y="30" font-size="11" opacity="0.8">ON THE PHONE</text>
+          <rect x="620" y="40" width="300" height="150" rx="12" fill="none" stroke="currentColor" stroke-dasharray="6 4" opacity="0.6"/>
+          <text x="634" y="30" font-size="11" opacity="0.8">ON A SMALL SERVER (v1)</text>
+
+          <rect x="40" y="70" width="110" height="90" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+          <rect x="62" y="86" width="66" height="58" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="6 3"/>
+          <text x="95" y="178" text-anchor="middle" font-size="11">camera + square guide</text>
+
+          <line x1="150" y1="115" x2="196" y2="115" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr3)"/>
+          <text x="173" y="104" text-anchor="middle" font-size="10">crop</text>
+
+          <rect x="206" y="70" width="140" height="90" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+          <text x="276" y="106" text-anchor="middle" font-weight="600">small model</text>
+          <text x="276" y="124" text-anchor="middle" font-size="11" opacity="0.8">20 to 30M parameters</text>
+          <text x="276" y="140" text-anchor="middle" font-size="11" opacity="0.8">10 to 20 ms per frame</text>
+
+          <line x1="346" y1="115" x2="392" y2="115" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr3)"/>
+
+          <rect x="402" y="70" width="150" height="90" rx="8" fill="var(--accent-soft)" stroke="currentColor" stroke-width="1.5"/>
+          <text x="477" y="106" text-anchor="middle" font-weight="600">one point</text>
+          <text x="477" y="124" text-anchor="middle" font-size="11" opacity="0.8">256 numbers</text>
+          <text x="477" y="140" text-anchor="middle" font-size="11" opacity="0.8">512 bytes, no photo leaves</text>
+
+          <line x1="552" y1="115" x2="636" y2="115" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr3)"/>
+          <text x="594" y="104" text-anchor="middle" font-size="10">send</text>
+
+          <rect x="646" y="70" width="250" height="90" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+          <text x="771" y="100" text-anchor="middle" font-weight="600">search 3M stored points</text>
+          <text x="771" y="118" text-anchor="middle" font-size="11" opacity="0.8">a cheap 16 GB box, a few ms</text>
+          <text x="771" y="136" text-anchor="middle" font-size="11" opacity="0.8">about 50 to 200 ms round trip</text>
+
+          <line x1="771" y1="160" x2="771" y2="226" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr3)"/>
+          <rect x="646" y="236" width="250" height="48" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+          <text x="771" y="256" text-anchor="middle" font-weight="600">album name + 30 s preview</text>
+          <text x="771" y="272" text-anchor="middle" font-size="11" opacity="0.8">metadata and Deezer</text>
+
+          <path d="M 477 160 L 477 262 L 636 262" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arr3)"/>
+          <text x="470" y="250" text-anchor="end" font-size="11" fill="var(--accent)">later (v2): compressed index</text>
+          <text x="470" y="266" text-anchor="end" font-size="11" fill="var(--accent)">on the phone, about 0.2 GB</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Version 1 is hybrid: the phone does the heavy image work and sends a 512-byte point to a server that holds the full gallery. Version 2 keeps a compressed copy of the gallery on the phone, if Step 10 shows the compression costs no more than 2 points of accuracy. The preview still needs the internet either way, so fully offline matters less than it sounds.</figcaption>
+  </figure>
+  <div class="prose">
+    <p>Finding the sleeve in the frame does not need its own trained detector, at least to start. The app draws a square guide, you line the sleeve up with it, and the crop is the query. An October 2026 study found that the main cause of lost matches is the object filling a different share of the frame in the photo than in the catalog image, and a guide fixes exactly that. The lost annotation data from last year is not needed for this.</p>
+  </div>
+</section>
+
+<section id="hardware">
+  <h2>What each part of the phone does</h2>
+  <div class="prose">
+    <p>A modern iPhone or Android flagship has four kinds of compute, and the plan leans on each for a different job. The export spike in Step 4 is where the assignments get measured instead of assumed.</p>
+  </div>
+  <div class="grid">
+    <div class="tile"><h3>Neural Engine (NPU)</h3><p class="lbl">Runs the small model that turns a frame into a point. This is where the 10 to 20 ms figures come from. Core ML on iOS and the Qualcomm or MediaTek backends on Android place the model here; Step 4 checks that every layer actually lands on it, because one unsupported layer falls back to the GPU or CPU and can triple the time.</p></div>
+    <div class="tile"><h3>CPU</h3><p class="lbl">Runs the nearest-neighbor search if the index moves onto the phone (libraries like USearch use the CPU's vector instructions), the camera cropping, and the few hundred microseconds of glue between stages. Also the fallback for any model layer the NPU refuses.</p></div>
+    <div class="tile"><h3>GPU</h3><p class="lbl">Resizing and color conversion of camera frames, and a second fallback for model layers. Not the preferred home for the model: on phones the NPU is faster per watt for this size of network, and the GPU is shared with the camera preview.</p></div>
+    <div class="tile"><h3>RAM</h3><p class="lbl">Holds the model (about 40 to 60 MB in half precision for a 20 to 30M parameter student) and, in version 2, the compressed index (0.1 to 0.2 GB, memory-mapped so the OS can page it). Well inside what iOS lets a foreground app keep; Step 4 records peak memory per device.</p></div>
+  </div>
+  <div class="prose">
+    <p>Two things the hardware list does not settle, and the plan should measure alongside Step 4: battery and heat under continuous scanning at 5 to 10 frames per second (the fix is to scan at a lower rate until something sleeve-like is in the guide), and the first-launch cost, since compiling a model for the Neural Engine can take minutes on the newest iPhones and must be cached after the first run.</p>
+  </div>
+</section>
+
+<section id="steps">
+  <h2>The twelve steps</h2>
+  <div class="prose">
+    <p>Each step measures something, and the measurement decides what happens next. Nobody commits to the expensive steps until the cheap ones say they are worth it. Steps 0 to 4 cost nothing but time. Steps 5, 8 and 9 rent a GPU for under $100 in total.</p>
+  </div>
+  <div class="phase">Phase A · free, on the Mac and your phone</div>
+  <ol class="steps">
+    <li><div class="n">0</div><div class="body"><h3>Build the gold set</h3><p>Photograph 60 to 100 of your own records, 3 to 5 shots each, under deliberately varied conditions, plus 100 to 200 frames with no record in them. Teach the scorer to count a near-identical cover as a hit and to report recall per slice (text-only, dark, glare, hand in frame).</p><p class="gate"><b>Decides:</b> nothing yet. Every later number depends on it. With 40 photos the error bars are about 12 points wide; with 300 they are about 4.5.</p><div class="chips"><span class="chip you">your phone</span><span class="chip">mac</span></div></div></li>
+    <li><div class="n">1</div><div class="body"><h3>One pass over the drive</h3><p>Read all 3.13M covers once. Write small 256-pixel copies into shards (50 to 80 GB) and compute a fingerprint for each so identical artwork across releases can be grouped.</p><p class="gate"><b>Decides:</b> the real gallery size, which sets every index size. Likely 2 to 2.5 million after grouping, but nobody has measured it.</p><div class="chips"><span class="chip">mac</span><span class="chip">needs the drive</span></div></div></li>
+    <li><div class="n">2</div><div class="body"><h3>Try the published models as they are</h3><p>Embed the gold covers plus 50,000 random distractors with each candidate model and query with your photos. One point per image, no tricks.</p><p class="gate"><b>Decides:</b> two "teacher" candidates and two phone-sized "student" candidates. Exit ramp: if a small frozen model already clears 90% top-1 and 97% top-5, skip training (Steps 7 to 9) and ship it.</p><div class="chips"><span class="chip">mac</span><span class="chip">needs the drive</span></div></div></li>
+    <li><div class="n">3</div><div class="body"><h3>Check whether the square guide is enough</h3><p>Compare the plain guide crop, a multi-scale version, Apple's built-in rectangle detector and an OpenCV outline pass. Label every miss by its cause.</p><p class="gate"><b>Decides:</b> if framing and skew explain under a quarter of the remaining misses, the custom detector track is closed for good.</p><div class="chips"><span class="chip">mac</span><span class="chip you">your phone</span></div></div></li>
+    <li><div class="n">4</div><div class="body"><h3>Export the small models to phones before training them</h3><p>Convert each student candidate to Core ML and to the Android runtimes. Measure speed, cold start, memory, and that the phone produces the same point as the Mac.</p><p class="gate"><b>Decides:</b> which students are shippable. Anything over 30 ms on the oldest target phone, or that fails to convert, drops out before any GPU money is spent on it.</p><div class="chips"><span class="chip">mac</span><span class="chip you">your phone</span></div></div></li>
+  </ol>
+  <div class="phase">Phase B · first working system</div>
+  <ol class="steps">
+    <li><div class="n">5</div><div class="body"><h3>Embed the whole gallery and go live, hybrid</h3><p>Rent a GPU for about an hour per candidate, embed every cover, and rerun the gold test at full scale. Serve the index from the Mac. In this first version the phone uploads a cropped JPEG and the server does the embedding, so the app works before any student model exists.</p><p class="gate"><b>Decides:</b> the teacher. A big accuracy drop from 50,000 distractors to the full gallery means near-duplicates are hurting and Step 8 must mine them.</p><div class="chips"><span class="chip gpu">rented gpu</span><span class="chip">mac</span><span class="chip">needs the drive</span></div></div></li>
+    <li><div class="n">6</div><div class="body"><h3>Build the fake-photo simulator and calibrate it</h3><p>Write the tilt-glare-shadow-blur-background pipeline. Then check it against your real photos: the model should fail on fake photos about as often, and on the same slices, as on real ones.</p><p class="gate"><b>Decides:</b> the simulator's settings are frozen once fake and real recall are within 5 points. If fake photos are much easier, widen glare, tilt and clutter until they are not.</p><div class="chips"><span class="chip">mac</span></div></div></li>
+    <li><div class="n">7</div><div class="body"><h3>Train a small adapter on the frozen teacher</h3><p>Cache the teacher's output for 100,000 to 200,000 covers and their fake photos, and train a small head that also shrinks each point to 256 numbers.</p><p class="gate"><b>Decides:</b> the point size, and whether Step 8 is worth it. A gain of 5 points or more means a full fine-tune has headroom; under 2 means skip it.</p><div class="chips"><span class="chip">mac</span></div></div></li>
+  </ol>
+  <div class="phase">Phase C · training, only as needed</div>
+  <ol class="steps">
+    <li><div class="n">8</div><div class="body"><h3>Fine-tune the teacher</h3><p>Only if Step 7 showed headroom. Retrain the whole teacher on clean-cover-to-fake-photo pairs, with identical-artwork groups kept out of the "push apart" set. About $10 to $60 of GPU time.</p><p class="gate"><b>Decides:</b> adopt it only if it beats Step 7 by 3 points and loses no slice. Otherwise keep the frozen teacher plus adapter.</p><div class="chips"><span class="chip gpu">rented gpu</span></div></div></li>
+    <li><div class="n">9</div><div class="body"><h3>Distill the phone student</h3><p>Teach each surviving small model to map fake photos onto the teacher's clean-cover points. 3 to 10 hours on one consumer GPU, $2 to $15. The phone then sends a 512-byte point instead of a photo.</p><p class="gate"><b>Decides:</b> which student ships. It must stay within 2 points of the teacher and under 30 ms on the oldest target phone.</p><div class="chips"><span class="chip gpu">rented gpu</span><span class="chip you">your phone</span></div></div></li>
+  </ol>
+  <div class="phase">Phase D · finishing</div>
+  <ol class="steps">
+    <li><div class="n">10</div><div class="body"><h3>Try moving the index onto the phone</h3><p>Build compressed indexes (product quantization at 64 and 32 bytes per point, and a binary variant) and query them with the student on the gold set.</p><p class="gate"><b>Decides:</b> if the 64-byte index stays within 2 points of exact search, ship it as a 0.1 to 0.2 GB download with the server as fallback. Otherwise stay hybrid.</p><div class="chips"><span class="chip">mac</span><span class="chip">needs the drive</span></div></div></li>
+    <li><div class="n">11</div><div class="body"><h3>Calibrate the lock and finish the app</h3><p>Pick the confidence threshold that gives 99% precision when the app commits to an answer, require three agreeing frames, and send low-confidence text-heavy cases through on-device text recognition against artist and title.</p><p class="gate"><b>Decides:</b> the ship bar. 99% lock precision, 85% of gold records locked within 3 seconds, and a blank wall never locks.</p><div class="chips"><span class="chip you">your phone</span></div></div></li>
+  </ol>
+</section>
+
+<section id="numbers">
+  <h2>Numbers to remember</h2>
+  <div class="grid">
+    <div class="tile"><div class="big num">3.13M</div><div class="lbl">covers in the gallery before grouping identical artwork</div></div>
+    <div class="tile"><div class="big num">1</div><div class="lbl">stored point per cover, down from 13.6</div></div>
+    <div class="tile"><div class="big num">10 to 20 ms</div><div class="lbl">to turn a frame into a point on a recent phone</div></div>
+    <div class="tile"><div class="big num">0.2 GB</div><div class="lbl">compressed index if it moves onto the phone</div></div>
+    <div class="tile"><div class="big num">&lt; $100</div><div class="lbl">total rented GPU time across the whole plan, estimated</div></div>
+    <div class="tile"><div class="big num">300</div><div class="lbl">real photos of your records needed to make decisions you can trust</div></div>
+  </div>
+</section>
+
+<section id="unknown">
+  <h2>What nobody has measured yet</h2>
+  <div class="prose">
+    <ul class="plain">
+      <li>How DINOv3 performs on our covers, or at 224 pixels, or in its ConvNeXt form. Public benchmarks are not album covers. Step 2 answers this.</li>
+      <li>How fast DINOv3 or SigLIP 2 actually run on an iPhone or a Pixel. Only Apple's and Qualcomm's own small models have published phone timings. Step 4 answers this.</li>
+      <li>How much accuracy product quantization costs on near-duplicate artwork. Step 10 answers this.</li>
+      <li>Whether Apple's MobileCLIP2 license allows use in a public app. Someone has to read it.</li>
+      <li>Every threshold in the plan (2 points, 5 points, 30 ms) is the report author's judgment, chosen to sit outside the gold set's noise, not a number from a paper.</li>
+    </ul>
+  </div>
+  <div class="callout">
+    <h3>What only Gautham can do</h3>
+    <p>Plug in the Seagate drive, which Steps 1, 2, 5 and 10 read from. Photograph 60 to 100 of your records, 3 to 5 shots each in different light and angles, plus 100 to 200 shots with no record, into <span class="num">record-scan-data/gold/photos/</span> with a <span class="num">labels.csv</span> of file, artist, title and an optional MusicBrainz id. Those photos are the project's only ground truth, which is why they never go into training.</p>
+  </div>
+</section>
+
+<section id="glossary">
+  <h2>Glossary</h2>
+  <dl class="gloss">
+    <dt>Embedding, or point</dt><dd>The list of a few hundred numbers a model produces for an image. Treated as coordinates, so "similar" means "nearby".</dd>
+    <dt>Gallery, or index</dt><dd>All the stored cover points, arranged in a structure that makes finding the nearest one fast without comparing against all 3 million.</dd>
+    <dt>Query</dt><dd>Your photo, after it has been turned into a point. The app looks for the gallery point nearest to it.</dd>
+    <dt>Recall at 1, recall at 5</dt><dd>The share of test photos where the correct album is the top answer, or is among the top five answers.</dd>
+    <dt>Distractors</dt><dd>Random extra covers added to a test gallery so the model has to pick the right answer out of a crowd, not just out of the handful we photographed.</dd>
+    <dt>Frozen model</dt><dd>A published model used exactly as downloaded, with no training of our own.</dd>
+    <dt>Fine-tuning</dt><dd>Continuing to train a published model on our own examples so it gets better at our specific task.</dd>
+    <dt>Teacher and student</dt><dd>A big accurate model (teacher) and a small fast one trained to copy its answers (student). The student is what runs on the phone.</dd>
+    <dt>Distillation</dt><dd>The training process that makes the student copy the teacher.</dd>
+    <dt>Simulator</dt><dd>Our code that turns a clean cover into a fake phone photo: tilt, glare, shadow, blur, a background. Produces training pairs on the fly; nothing is saved.</dd>
+    <dt>Product quantization</dt><dd>A way to compress each stored point from about a kilobyte to 32 or 64 bytes while keeping nearest-neighbor search mostly accurate. It is what could let the whole gallery fit on a phone.</dd>
+    <dt>Lock</dt><dd>The moment the app stops scanning and commits to an answer, because the same album has won several frames in a row with a high enough score.</dd>
+  </dl>
+</section>
+
+<footer>
+  <p>Sources: the project's research report at <span class="num">docs/research/reports/On device album cover retrieval 2026.md</span> and the four notes beside it, which cite the DINOv3 paper (arXiv 2508.10104), SSCD (arXiv 2202.10261), Meivar et al. on object-to-frame ratio (arXiv 2610.11489), the Qualcomm AI Hub latency tables and Apple's MobileCLIP2 release. Estimates are marked as estimates in the report.</p>
+  <p>Project map and plan: <span class="num">docs/superpowers/plans/2026-10-24-record-scan-recovery.md</span>.</p>
+</footer>
+</div>
