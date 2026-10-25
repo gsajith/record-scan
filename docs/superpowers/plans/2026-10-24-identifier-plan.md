@@ -189,7 +189,7 @@ export function splitFor(set: "gold" | "wild", sha1: string): "eval" | "sim"   /
 // API
 GET  /api/search?q=...&limit=20          -> { results: [{ mbid, title, artists, format, year?, thumb: "https://coverartarchive.org/release/<mbid>/front-250" }] }
 POST /api/ingest   multipart { set, file } | json { set, url, source_url, license }   -> { sha1, split, file }   // saves <set>/photos/<sha1>.jpg (re-encodes to JPEG, max side 1600), refuses a wild image without source_url + license, returns existing record if sha1 already present
-GET  /api/queue?set=gold                  -> { next: { file, sha1 } | null, remaining }   // unlabeled images in <set>/inbox/ and photos/ without a label line
+POST /api/queue   json { set, skip }      -> { next: { file, sha1, video } | null, remaining, counts }   // photos/ without a label line, then <set>/inbox/ frames (moved to inbox/done/); video lets the page keep the album within one recording; counts per set and split
 POST /api/label    json Label             -> { ok: true }   // validates with LabelSchema, split recomputed server-side, appends to <set>/labels.jsonl
 GET  /api/image/<set>/<sha1>              -> the JPEG (so the page can show local files)
 ```

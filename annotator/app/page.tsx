@@ -189,6 +189,7 @@ export default function LabelerPage() {
 
   async function save() {
     if (!photo || !canSave) return;
+    const loadBefore = loadId.current;
     setBusy("save");
     setError(null);
     const label = {
@@ -215,6 +216,8 @@ export default function LabelerPage() {
       setBusy(null);
       return;
     }
+    // A photo pasted while the label was saving is already on screen; don't replace it
+    if (loadId.current !== loadBefore) return;
     await loadNext(skipped);
   }
 
