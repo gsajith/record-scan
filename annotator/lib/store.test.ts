@@ -92,6 +92,15 @@ describe("countLabels", () => {
     expect(countLabels(setDir)).toEqual({ eval: 1, sim: 1 });
   });
 
+  it("stops at a line the Python loader would reject, naming the line", () => {
+    const setDir = tempSetDir("wild");
+    appendLabel(setDir, wild(evalSha1, "eval"));
+    writeFileSync(join(setDir, "labels.jsonl"), JSON.stringify({ ...wild(simSha1, "sim"), tags: ["sparkles"] }) + "\n", {
+      flag: "a",
+    });
+    expect(() => countLabels(setDir)).toThrow(/line 2.*tags/);
+  });
+
   it("counts nothing for a set with no labels yet", () => {
     expect(countLabels(tempSetDir("gold"))).toEqual({ eval: 0, sim: 0 });
   });

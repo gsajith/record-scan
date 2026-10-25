@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Release } from "@/lib/catalog";
-import { hotkeyAction, TAG_KEYS } from "@/lib/hotkeys";
+import { hotkeyAction, KIND_KEYS, TAG_KEYS } from "@/lib/hotkeys";
 import { KINDS, TAGS, type Kind, type SetName, type Split, type Tag } from "@/lib/labels";
 import type { QueueItem } from "@/lib/queue";
 import styles from "./page.module.css";
@@ -11,7 +11,6 @@ type Counts = Record<SetName, Record<Split, number>>;
 
 // Gold only for now; the wild set, with its source and license fields, comes next
 const SET = "gold";
-const KIND_KEYS: Record<Kind, string> = { positive: "P", negative: "N", unknown: "U" };
 
 // Browsers often give HEIC files no type, so the extension counts too
 const IMAGE_EXT = /\.(heic|heif)$/i;
@@ -51,13 +50,14 @@ export default function LabelerPage() {
   const [results, setResults] = useState<Result[]>([]);
   const [active, setActive] = useState(0);
   const [searchError, setSearchError] = useState<string | null>(null);
-  // The album and kind carry over to the next photo: a video's frames are all the same record
+  // The album and kind carry over between frames of the same video, which show one record
   const [picked, setPicked] = useState<Result | null>(null);
   const [kind, setKind] = useState<Kind>("positive");
   const [tags, setTags] = useState<Tag[]>([]);
   const [notes, setNotes] = useState("");
 
   const searchRef = useRef<HTMLInputElement>(null);
+  const lastVideo = useRef<string | null>(null);
   const [focusSearchTick, setFocusSearchTick] = useState(0);
   const focusSearch = useCallback(() => setFocusSearchTick((n) => n + 1), []);
 
@@ -69,29 +69,39 @@ export default function LabelerPage() {
     setResults([]);
   }, []);
 
+  // A new record: forget the album and kind, and get ready to search
+  const startNewRecord = useCallback(() => {
+    setPicked(null);
+    setKind("positive");
+    focusSearch();
+  }, [focusSearch]);
+
   const applyQueue = useCallback(
-    (body: QueueResponse, wantSearch: boolean) => {
+    (body: QueueResponse) => {
       setPhoto(body.next);
       setRemaining(body.remaining);
       setCounts(body.counts);
       clearPerPhoto();
-      if (body.next && wantSearch) focusSearch();
+      const video = body.next?.video ?? null;
+      // Pasted photos and the first frame of each video are a new record
+      if (body.next && (video === null || video !== lastVideo.current)) startNewRecord();
+      lastVideo.current = video;
     },
-    [clearPerPhoto, focusSearch],
+    [clearPerPhoto, startNewRecord],
   );
 
   // Callers set busy first; it starts as "load" for the first fetch
   const loadNext = useCallback(
-    (skip: string[], wantSearch: boolean) =>
+    (skip: string[]) =>
       fetchQueue(skip)
-        .then((body) => applyQueue(body, wantSearch))
+        .then(applyQueue)
         .catch((e: Error) => setError(e.message))
         .finally(() => setBusy(null)),
     [applyQueue],
   );
 
   useEffect(() => {
-    loadNext([], true);
+    loadNext([]);
   }, [loadNext]);
 
   useEffect(() => {
@@ -110,15 +120,17 @@ export default function LabelerPage() {
         const res = await fetch("/api/ingest", { method: "POST", body: form });
         const body = await res.json();
         if (!res.ok) throw new Error(errorText(body, "Couldn't save that photo."));
-        setPhoto({ sha1: body.sha1, file: body.file });
+        setPhoto({ sha1: body.sha1, file: body.file, video: null });
         clearPerPhoto();
+        startNewRecord();
+        lastVideo.current = null;
       } catch (e) {
         setError((e as Error).message);
       } finally {
         setBusy(null);
       }
     },
-    [clearPerPhoto],
+    [clearPerPhoto, startNewRecord],
   );
 
   // Paste an image from anywhere on the page
@@ -161,7 +173,8 @@ export default function LabelerPage() {
     document.getElementById(`result-${active}`)?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
-  const canSave = photo !== null && busy === null && (kind !== "positive" || picked !== null);
+  const needsAlbum = kind === "positive" && picked === null;
+  const canSave = photo !== null && busy === null && !needsAlbum;
 
   async function save() {
     if (!photo || !canSave) return;
@@ -191,7 +204,7 @@ export default function LabelerPage() {
       setBusy(null);
       return;
     }
-    await loadNext(skipped, kind === "positive" && picked === null);
+    await loadNext(skipped);
   }
 
   function skip() {
@@ -200,7 +213,7 @@ export default function LabelerPage() {
     setSkipped(next);
     setStatus(null);
     setBusy("load");
-    loadNext(next, kind === "positive" && picked === null);
+    loadNext(next);
   }
 
   function toggleTag(t: Tag) {
@@ -218,7 +231,7 @@ export default function LabelerPage() {
       if (action.type === "kind") setKind(action.kind);
       else if (action.type === "tag") toggleTag(action.tag);
       else if (action.type === "skip") skip();
-      else if (action.type === "search" || (action.type === "save" && !canSave && kind === "positive")) {
+      else if (action.type === "search" || (action.type === "save" && needsAlbum)) {
         setKind("positive");
         focusSearch();
       } else if (action.type === "save") save();
@@ -243,6 +256,7 @@ export default function LabelerPage() {
 
   let emptyText = status ? `${status}. ` : "";
   if (busy === "load") emptyText = "Loading…";
+  else if (error) emptyText = error;
   else if (busy === "ingest") emptyText = "Saving photo…";
   else if (remaining > 0) emptyText += "You skipped the rest. Reload the page to see them again.";
   else emptyText += "Nothing left in the inbox. Paste a photo, or drop one here.";
@@ -282,14 +296,16 @@ export default function LabelerPage() {
       </section>
 
       <section className={styles.panel} aria-label="Label">
-        <div className={styles.strip} aria-live="polite">
+        <div className={styles.strip}>
           <h1 className={styles.heading}>Gold set</h1>
           {counts && (
             <p className={styles.hint}>
               Gold {counts.gold.eval} eval · Wild {counts.wild.eval} eval, {counts.wild.sim} sim · {remaining} to label
             </p>
           )}
-          {photo && status && <p className={styles.saved}>{status}</p>}
+          <p className={styles.saved} aria-live="polite">
+            {photo && status}
+          </p>
         </div>
 
         <fieldset className={styles.kinds} disabled={!photo}>
@@ -297,7 +313,7 @@ export default function LabelerPage() {
           {KINDS.map((k) => (
             <label key={k} className={k === kind ? styles.kindOn : styles.kind}>
               <input type="radio" name="kind" value={k} checked={k === kind} onChange={() => setKind(k)} />
-              {k} <kbd>{KIND_KEYS[k]}</kbd>
+              {k} <kbd>{KIND_KEYS[k].toUpperCase()}</kbd>
             </label>
           ))}
         </fieldset>

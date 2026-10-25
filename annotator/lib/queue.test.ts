@@ -30,7 +30,7 @@ describe("nextInQueue", () => {
     const green = await ingestImage(setDir, await jpeg("#0f0"));
     labelAsNegative(setDir, red.sha1);
 
-    expect(await nextInQueue(setDir)).toEqual({ next: green, remaining: 1 });
+    expect(await nextInQueue(setDir)).toEqual({ next: { ...green, video: null }, remaining: 1 });
   });
 
   it("moves inbox frames into photos in name order, after photos already waiting", async () => {
@@ -43,13 +43,14 @@ describe("nextInQueue", () => {
     writeFileSync(join(inbox, "record-01.jpg"), frame1);
     writeFileSync(join(inbox, "record.mov"), "a video the frame sampler has not run on yet");
 
-    expect(await nextInQueue(setDir)).toEqual({ next: waiting, remaining: 3 });
+    expect(await nextInQueue(setDir)).toEqual({ next: { ...waiting, video: null }, remaining: 3 });
 
     labelAsNegative(setDir, waiting.sha1);
     const sha1 = createHash("sha1").update(frame1).digest("hex");
-    expect(await nextInQueue(setDir)).toEqual({ next: { sha1, file: `photos/${sha1}.jpg` }, remaining: 2 });
+    expect(await nextInQueue(setDir)).toEqual({ next: { sha1, file: `photos/${sha1}.jpg`, video: "record" }, remaining: 2 });
     expect(existsSync(join(setDir, "photos", `${sha1}.jpg`))).toBe(true);
-    expect(readdirSync(join(inbox, "done"))).toEqual(["record-01.jpg"]);
+    expect(readdirSync(join(inbox, "done"))).toContain("record-01.jpg");
+    expect(readdirSync(inbox)).toEqual(["done", "record-02.jpg", "record.mov"]);
   });
 
   it("passes over photos skipped this session but still counts them", async () => {
@@ -57,7 +58,39 @@ describe("nextInQueue", () => {
     const red = await ingestImage(setDir, await jpeg("#f00"));
     const green = await ingestImage(setDir, await jpeg("#0f0"));
 
-    expect(await nextInQueue(setDir, [red.sha1])).toEqual({ next: green, remaining: 2 });
+    expect(await nextInQueue(setDir, [red.sha1])).toEqual({ next: { ...green, video: null }, remaining: 2 });
     expect(await nextInQueue(setDir, [red.sha1, green.sha1])).toEqual({ next: null, remaining: 2 });
+  });
+
+  it("tells which video an inbox frame came from, so the page knows when the record changes", async () => {
+    const setDir = tempSetDir();
+    mkdirSync(join(setDir, "inbox"), { recursive: true });
+    writeFileSync(join(setDir, "inbox", "abbey road-01.jpg"), await jpeg("#f0f"));
+    const pasted = await ingestImage(setDir, await jpeg("#0f0"));
+
+    expect((await nextInQueue(setDir)).next).toEqual({ ...pasted, video: null });
+    labelAsNegative(setDir, pasted.sha1);
+    expect((await nextInQueue(setDir)).next?.video).toBe("abbey road");
+  });
+
+  it("still knows a frame's video in a later request, such as after a page reload", async () => {
+    const setDir = tempSetDir();
+    mkdirSync(join(setDir, "inbox"), { recursive: true });
+    writeFileSync(join(setDir, "inbox", "abbey road-01.jpg"), await jpeg("#f0f"));
+
+    const first = await nextInQueue(setDir);
+    expect(await nextInQueue(setDir)).toEqual(first);
+    expect(first.next?.video).toBe("abbey road");
+  });
+
+  it("copes with two requests taking the same inbox frame at once", async () => {
+    const setDir = tempSetDir();
+    mkdirSync(join(setDir, "inbox"), { recursive: true });
+    writeFileSync(join(setDir, "inbox", "record-01.jpg"), await jpeg("#abc"));
+
+    const [a, b] = await Promise.all([nextInQueue(setDir), nextInQueue(setDir)]);
+    expect(b.next).toEqual(a.next);
+    expect(a.next?.video).toBe("record");
+    expect(readdirSync(join(setDir, "inbox"))).toEqual(["done"]);
   });
 });

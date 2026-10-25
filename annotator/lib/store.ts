@@ -5,12 +5,17 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
-import type { Label, Split } from "./labels";
+import { checkLabel, SETS, type Label, type Split } from "./labels";
 
 const MAX_SIDE = 1600;
+
+/** Where a photo lives inside its set folder. */
+export function photoFile(sha1: string): string {
+  return `photos/${sha1}.jpg`;
+}
 
 /** The upload is not an image the labeler can decode. Other errors (disk, permissions) pass through. */
 export class NotAnImageError extends Error {}
@@ -25,7 +30,7 @@ export class NotAnImageError extends Error {}
  */
 export async function ingestImage(setDir: string, input: Buffer): Promise<{ sha1: string; file: string }> {
   const sha1 = createHash("sha1").update(input).digest("hex");
-  const file = `photos/${sha1}.jpg`;
+  const file = photoFile(sha1);
   const path = join(setDir, file);
   if (!existsSync(path)) {
     const jpeg = await decodeToJpeg(input);
@@ -104,23 +109,34 @@ export function appendLabel(setDir: string, label: Label): void {
   }
 }
 
-/** The latest label per sha1, like load_labels in Python. A broken line stops with its line number. */
+/**
+ * The latest label per sha1, like load_labels in Python, with the same checks: a line Python
+ * would reject stops here too, naming the line.
+ */
 export function readLabels(setDir: string): Map<string, Label> {
+  // The sealed holdout reuses the same layout under another root, so the folder name decides
+  const set = SETS.find((s) => s === basename(setDir));
+  if (!set) throw new Error(`${setDir} is not a gold or wild set folder`);
+  const path = join(setDir, "labels.jsonl");
   const latest = new Map<string, Label>();
   let text: string;
   try {
-    text = readFileSync(join(setDir, "labels.jsonl"), "utf8");
-  } catch {
-    return latest; // no labels yet
+    text = readFileSync(path, "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return latest; // no labels yet
+    throw e;
   }
   text.split("\n").forEach((line, i) => {
     if (!line.trim()) return;
+    let record: unknown;
     try {
-      const label = JSON.parse(line) as Label;
-      latest.set(label.sha1, label);
+      record = JSON.parse(line);
     } catch {
-      throw new Error(`${join(setDir, "labels.jsonl")} line ${i + 1} is not valid JSON`);
+      throw new Error(`${path} line ${i + 1} is not valid JSON`);
     }
+    const checked = checkLabel(set, record);
+    if ("error" in checked) throw new Error(`${path} line ${i + 1}: ${checked.error}`);
+    latest.set(checked.label.sha1, checked.label);
   });
   return latest;
 }
