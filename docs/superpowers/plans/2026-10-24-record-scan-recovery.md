@@ -4,7 +4,7 @@
 
 **Goal:** Turn three half-finished Record Scan repos into one working pipeline and app: point a phone at a vinyl record, identify it against a 3.1M-cover MusicBrainz gallery using local CLIP-style embeddings and an HNSW index, and play a 30-second Deezer preview.
 
-**Architecture:** One git repo `record-scan` holds the Next.js phone app (`app/`) and the Python pipeline (`pipeline/`). All large data lives outside git in `~/Projects/record-scan-data` and on the external drive. The finished pipeline stages (metadata slimming, cover download) are kept as they are. The live stage (embed, index, identify, serve) is rewritten around one `config.py`, a pluggable embedder, one vector per image, and an evaluation harness that must pass on real phone photos before the multi-hour full embedding run. The app calls a FastAPI retrieval service and falls back to the existing GPT-5-mini route when the service is unavailable.
+**Architecture:** One git repo `record-scan` holds the Next.js phone app (`web/`) and the Python pipeline (`pipeline/`). All large data lives outside git in `~/Projects/record-scan-data` and on the external drive. The finished pipeline stages (metadata slimming, cover download) are kept as they are. The live stage (embed, index, identify, serve) is rewritten around one `config.py`, a pluggable embedder, one vector per image, and an evaluation harness that must pass on real phone photos before the multi-hour full embedding run. The app calls a FastAPI retrieval service and falls back to the existing GPT-5-mini route when the service is unavailable.
 
 **Tech stack:** Python 3.12, PyTorch 2.8 on MPS, open_clip, hnswlib, FastAPI, pytest. Next.js 15, React 19, TypeScript, react-webcam, Deezer public API, Vercel. Supabase only for the deferred detector track.
 
@@ -127,7 +127,9 @@ Elsewhere on disk: nothing else related to this project was found under `~/Proje
   package.json                     tooling only (husky and commitlint)
   commitlint.config.mjs  .husky/  .github/workflows/pr-title.yml
   CLAUDE.md  README.md  .gitignore  .env.example
-  app/                             Next.js phone app (today's repo root contents)
+  web/                             Next.js scanner prototype, temporary until the native app
+  annotator/                       Next.js annotation tool, temporary (detector track)
+  mobile/                          reserved for the native iOS/Android app (not created yet)
   pipeline/
     requirements.txt  requirements-tools.txt  .venv/
     config.py                      RS_DATA_DIR, RS_IMAGE_ROOT, derived dirs, fail-fast checks
@@ -150,8 +152,7 @@ Elsewhere on disk: nothing else related to this project was found under `~/Proje
   models/                          yolov8n.pt
   gold/                            photos/ and labels.csv  (Part F, H2)
   _archive-mbdump-2025-11/         the old mbdump git repo, untouched (contains venv; delete when ready)
-
-~/Projects/album-annotator/        git: github.com/gsajith/album-annotator  (moved out of the pipeline tree, deferred)
+  _archive-album-annotator-2025-11/  the old album-annotator checkout, now folded into annotator/
 ```
 
 ## Part D: decisions
@@ -186,11 +187,11 @@ Dispatch: one fresh agent per task and a fresh reviewer per task (superpowers:su
 
 - **H1** Mount the Seagate drive. Confirm `/Volumes/Seagate Portabl/record scan Pictures/record_scan_cover_images_split/00` exists. Needed from T9 on.
 - **H2** Gold set. Photograph 25 to 40 of your own records with your phone the way a user would: standing, room light, slight angle, some glare. Add 5 photos with no record in them. Save as `~/Projects/record-scan-data/gold/photos/<slug>.jpg` and fill `~/Projects/record-scan-data/gold/labels.csv` with the columns `file,artist,title`, leaving artist and title blank for negatives. These photos are hold-outs. Do not use them for anything else.
-- **H3** (deferred track, only if T14 is ever approved) Try a restore in the Supabase dashboard. If it is gone, create a new project, put its URL and anon key in `~/Projects/album-annotator/.env.local` and the Vercel project, recreate the `annotations` table and the public `album-images` bucket as described in `docs/history/detector-notes-2025-11.md`, then annotate 100 to 300 photos.
+- **H3** (deferred track, only if T14 is ever approved) Try a restore in the Supabase dashboard. If it is gone, create a new project, put its URL and anon key in `~/Projects/record-scan/annotator/.env.local` and the Vercel project, recreate the `annotations` table and the public `album-images` bucket as described in `docs/history/detector-notes-2025-11.md`, then annotate 100 to 300 photos.
 - **H4** Confirm or override D1 to D6.
-- **H5a** Right after Task 2 lands: in Vercel, set the record-scan project's root directory to `app/`. Until then the next deploy of record-scan.vercel.app fails.
+- **H5a** Right after Task 2 lands: in Vercel, set the record-scan project's root directory to `web/`. Until then the next deploy of record-scan.vercel.app fails.
 - **H5b** When T12 is running: add `RETRIEVAL_URL` to the Vercel project and expose the service over Tailscale or cloudflared.
-- **H6** Deletions you may want, none done by the plan: `_archive-mbdump-2025-11/venv` (1.4 GB), `record-scan/app/.next` (regenerable), `~/.cache/clip` (1.2 GB), `~/.cache/torch/hub/checkpoints` (1.2 GB, only if T9 does not pick DINOv2), HF `models--openai--clip-vit-base-patch32` (1.1 GB) and `models--timm--vit_base_patch32_clip_224.openai` (577 MB), and eventually the 18.6 GB tar.xz once D5 is settled, or move it to the Seagate drive.
+- **H6** Deletions you may want, none done by the plan: `_archive-mbdump-2025-11/venv` (1.4 GB), `record-scan/web/.next` (regenerable), `~/.cache/clip` (1.2 GB), `~/.cache/torch/hub/checkpoints` (1.2 GB, only if T9 does not pick DINOv2), HF `models--openai--clip-vit-base-patch32` (1.1 GB) and `models--timm--vit_base_patch32_clip_224.openai` (577 MB), and eventually the 18.6 GB tar.xz once D5 is settled, or move it to the Seagate drive.
 
 ---
 
@@ -222,7 +223,7 @@ Everything is a move or a copy. Nothing is deleted. Do this with the drive unmou
   mv ~/Projects/record-scan-app ~/Projects/record-scan
   mv ~/Projects/record-scan-data/mbdump/src/train-model/album-annotator ~/Projects/album-annotator
   ```
-- [ ] Step 3: In `~/Projects/record-scan`: `mkdir app`. `git mv` these into `app/`: `src`, `public`, `tsconfig.json`, `next.config.ts`, `eslint.config.mjs`, `package-lock.json`, `README.md`, `.gitignore`. Plain `mv` for the untracked `.env`, `node_modules`, `.next`, `next-env.d.ts`. Split `package.json`: the root keeps `name`, `private`, `scripts.prepare` and the three commitlint and husky devDependencies; `app/package.json` gets everything else. Run `npm install` at the root and in `app/`. Create `.env.example` at the root listing `OPENAI_API_KEY`, `RETRIEVAL_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` with placeholder values, and delete `app/.env.example`.
+- [ ] Step 3: In `~/Projects/record-scan`: `mkdir web`. `git mv` these into `web/`: `src`, `public`, `tsconfig.json`, `next.config.ts`, `eslint.config.mjs`, `package-lock.json`, `README.md`, `.gitignore`. Plain `mv` for the untracked `.env`, `node_modules`, `.next`, `next-env.d.ts`. Split `package.json`: the root keeps `name`, `private`, `scripts.prepare` and the three commitlint and husky devDependencies; `web/package.json` gets everything else. Run `npm install` at the root and in `web/`. Create `.env.example` at the root listing `OPENAI_API_KEY`, `RETRIEVAL_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` with placeholder values, and delete `web/.env.example`.
 - [ ] Step 4: Root `.gitignore`, exact content:
   ```
   node_modules/
@@ -260,7 +261,7 @@ Everything is a move or a copy. Nothing is deleted. Do this with the drive unmou
   mv mbdump/src/record-retrieval/yolov8n.pt models/
   mv mbdump _archive-mbdump-2025-11
   ```
-- [ ] Step 7: Verify. `git add -A` then `git diff --cached --name-only | xargs -I{} du -k {} | sort -n | tail -5` shows nothing over 1 MB except `app/package-lock.json`. `du -sh ~/Projects/record-scan-data/{metadata,embeddings,models,musicbrainz-dump-2025-08-13}` matches A2 (about 2.3 GB, 300 MB, 6 MB, 18.6 GB). `cd app && npm run lint && npx tsc --noEmit` pass.
+- [ ] Step 7: Verify. `git add -A` then `git diff --cached --name-only | xargs -I{} du -k {} | sort -n | tail -5` shows nothing over 1 MB except `web/package-lock.json`. `du -sh ~/Projects/record-scan-data/{metadata,embeddings,models,musicbrainz-dump-2025-08-13}` matches A2 (about 2.3 GB, 300 MB, 6 MB, 18.6 GB). `cd web && npm run lint && npx tsc --noEmit` pass.
 - [ ] Step 8: Commit `chore: restructure into app/ and pipeline/ monorepo` with a body listing the renames and the data folder. Push. Tell Gautham to do H5a now.
 
 ### Task 3: pipeline config, environment and fail-fast checks
@@ -362,13 +363,13 @@ class Identifier:
 ### Task 6: app cleanup (v0 keeps working)
 
 **Files:**
-- Create: `app/src/lib/deezer.ts`
-- Modify: `app/src/app/page.tsx`, `app/src/app/api/deezer/album/route.ts`, `app/src/app/layout.tsx` (description), `app/README.md` (replace the boilerplate with how to run and the env vars)
-- Delete: `app/public/{file,globe,next,vercel,window}.svg`
+- Create: `web/src/lib/deezer.ts`
+- Modify: `web/src/app/page.tsx`, `web/src/app/api/deezer/album/route.ts`, `web/src/app/layout.tsx` (description), `web/README.md` (replace the boilerplate with how to run and the env vars)
+- Delete: `web/public/{file,globe,next,vercel,window}.svg`
 
 **Interfaces (produces):**
 ```ts
-// app/src/lib/deezer.ts (server only)
+// web/src/lib/deezer.ts (server only)
 export interface DeezerAlbum { id: number; title: string; artist: string; cover: string; preview: string | null } // preview is the first track's 30 s mp3 from /album/{id}/tracks
 export function normalizeName(s: string): string   // lowercase, strip accents and punctuation, drop a leading "the "
 export async function findAlbum(title: string, artists: string[]): Promise<DeezerAlbum | null>
@@ -377,7 +378,7 @@ export async function findAlbum(title: string, artists: string[]): Promise<Deeze
 
 - [ ] Step 1: Rewrite the Deezer route to call `findAlbum` and return `DeezerAlbum | null`. Keep the path `/api/deezer/album` and add an `artists` query param (comma separated) so the deployed app keeps working. Remove the tab and encode the query.
 - [ ] Step 2: `page.tsx`: drop the unused imports, type the result as `DeezerAlbum`, run the Deezer search from the capture handler instead of an effect, keep the capture button and the widget iframe for now.
-- [ ] Step 3: `cd app && npm run lint && npx tsc --noEmit` clean. `npm run dev`, scan one record, confirm the Deezer widget still appears.
+- [ ] Step 3: `cd web && npm run lint && npx tsc --noEmit` clean. `npm run dev`, scan one record, confirm the Deezer widget still appears.
 - [ ] Step 4: Commit `refactor(app): typed deezer lookup and lint cleanup`.
 
 ### Task 7: evaluation harness (code only; runs in Task 9)
@@ -460,8 +461,8 @@ FastAPI app. `Identifier` and `Catalog` are built once at startup from the `RS_M
 ### Task 13: the app scans continuously and plays the preview
 
 **Files:**
-- Create: `app/src/app/api/identify/route.ts`, `app/src/lib/scanner.ts`, `app/src/lib/scanner.test.ts`
-- Modify: `app/src/app/page.tsx`, `app/package.json` (add vitest)
+- Create: `web/src/app/api/identify/route.ts`, `web/src/lib/scanner.ts`, `web/src/lib/scanner.test.ts`
+- Modify: `web/src/app/page.tsx`, `web/package.json` (add vitest)
 
 **Interfaces (produces):**
 ```ts
@@ -478,7 +479,7 @@ Behavior: a "Start" tap (a user gesture) starts the camera and unlocks one `<aud
 
 - [ ] Step 1: Failing vitest cases for `shouldLock`: below threshold, one frame above, two frames above.
 - [ ] Step 2: Implement the route, `scanner.ts` and the page changes.
-- [ ] Step 3: `cd app && npm run lint && npx tsc --noEmit && npx vitest run` clean. Manual test on the phone over Tailscale or cloudflared with the Task 12 service running: a record locks within about 3 seconds and audio plays; a blank wall never locks; with `RETRIEVAL_URL` unset the GPT fallback still identifies.
+- [ ] Step 3: `cd web && npm run lint && npx tsc --noEmit && npx vitest run` clean. Manual test on the phone over Tailscale or cloudflared with the Task 12 service running: a record locks within about 3 seconds and audio plays; a blank wall never locks; with `RETRIEVAL_URL` unset the GPT fallback still identifies.
 - [ ] Step 4: Commit `feat(app): continuous scanning with local retrieval and preview playback`. Then H5b.
 
 ## Phase 4: deferred tracks (do not start without a new decision)
