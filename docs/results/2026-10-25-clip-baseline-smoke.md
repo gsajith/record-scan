@@ -46,6 +46,7 @@ seed 0, k=50, compared against brute force over 329,960 vectors:
 | 64 | 0.996 | 1.0 |
 | 128 (default) | 0.998 | 1.9 |
 | 256 | 0.998 | 2.8 |
+| 512 | 0.998 | 4.9 |
 | 1024 | 0.998 | 8.8 |
 
 Produced by this script, run from the repo root with the pipeline venv:
