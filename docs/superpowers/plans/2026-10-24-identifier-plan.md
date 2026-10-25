@@ -1,6 +1,6 @@
 # Record Scan identifier plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Dispatch implementers and reviewers with model `opus` (Gautham's standing preference).
+> **How this plan runs:** tasks are done in order with checkbox (`- [ ]`) steps. From Task 2 on, the controller session (Opus 5.5) implements tasks itself; if subagents are ever used, dispatch them with model `opus`. Progress is logged in `.superpowers/sdd/2026-10-24-identifier-plan/progress.md`.
 
 **Goal:** Build the record identifier the research report specifies: one vector per deduplicated cover, a query encoder trained on simulated phone photos, a phone-sized student, served hybrid first and on-device if a compressed index proves itself. This plan supersedes Tasks 4 to 13 of `docs/superpowers/plans/2026-10-24-record-scan-recovery.md`; Tasks 1 to 3 of that plan are done and its Parts A to F remain the project inventory.
 
@@ -8,7 +8,11 @@
 
 **Tech stack:** Python 3.12, PyTorch 2.8 (MPS), Hugging Face transformers and timm for backbones, open_clip for the CLIP baseline, hnswlib and faiss-cpu, WebDataset shards, SQLite FTS5, imagehash, ffmpeg. Next.js 16 (the `annotator/` app, repurposed as the labeler) with better-sqlite3 and zod. coremltools 9 and ExecuTorch 1.x for the export spike.
 
-**Spec:** `docs/research/reports/On device album cover retrieval 2026.md` (the twelve gated steps and the evidence behind them) plus the research notes beside it. Decisions D8 to D12 below extend the recovery plan's D1 to D7. Where this plan and the report differ, this plan wins; it records why.
+**Spec:** `docs/research/reports/On device album cover retrieval 2026.md` (the twelve gated steps and the evidence behind them) plus the research notes beside it. Decisions D8 to D13 below extend the recovery plan's D1 to D7. Where this plan and the report differ, this plan wins; it records why.
+
+**Contents:** Global constraints, Review focus, Decisions, What only Gautham can do (tasks and checkpoints), Layout, Phase A (Tasks 1 to 9), Phases B to D (outline), Data you can delete and when, Self-review notes.
+
+**Status:** Task 1 done (commit f270bb2). Next: Task 2.
 
 ## Global constraints
 
@@ -35,7 +39,7 @@
 
 ---
 
-## Part A: decisions added by this plan
+## Decisions
 
 - **D8 Labeler is local-only.** The `annotator/` app runs on the Mac, writes files under `RS_DATA_DIR`, and has no cloud backend. Couch use goes through Tailscale. Supabase code is removed. (Gautham, 2026-10-24.)
 - **D9 Candid internet photos are allowed for evaluation and simulator fitting, with a license filter and a one-time split.** Sources: Flickr Creative Commons, Wikimedia Commons, Pexels, Unsplash, Creative Commons YouTube frames. No Instagram, nothing unlicensed. Half (by hash) feeds simulator statistics and backgrounds; half is evaluation. Nothing from either half is used to train weights unless its license is CC0 or equivalent and Gautham says so.
@@ -44,7 +48,9 @@
 - **D13 Oldest target phone (open, Gautham decides before Task 8 reports).** The 30 ms p95 latency bar and the memory budget are defined against the oldest phone the app must run well on, one iPhone and one Android. Until named, the export spike reports numbers for every phone available and the gate cannot be applied.
 - **D12 Mobile shell framework: proposed Expo (React Native) with VisionCamera frame processors and `react-native-executorch` for one codebase on both platforms; native Swift and Kotlin if the export spike shows the React Native path cannot hit the latency bar.** Not needed in Phase A: iOS device timing comes from Xcode's Core ML performance report on a connected iPhone, which needs no app. Gautham confirms or overrides before Phase B's Task 12.
 
-## Part B: human tasks (only Gautham can do these)
+## What only Gautham can do
+
+### Tasks
 
 - **H1** Mount the Seagate drive before Tasks 5, 8 (distractors) and anything in Phase B.
 - **H2** Gold set, revised from the recovery plan's H2: 60 to 100 of your own records, a ten-second hand-held video of each (varying angle, distance, light, with and without your hand on it), plus 100 to 200 negatives (walls, shelves of spines, books, CDs, screens) and a few records you know are missing from Cover Art Archive. Drop the videos into `~/Projects/record-scan-data/gold/inbox/`; Task 2's sampler turns them into frames and Task 3's labeler labels them.
@@ -55,22 +61,7 @@
 - **H7** Before Phase B: an account on one GPU provider (RunPod or Modal) with a small balance; the whole plan budgets under $100.
 - **H8** Sealed holdout: pick about a third of your records before shooting H2, shoot them the same way, and keep their videos and frames in a folder outside `RS_DATA_DIR` that no agent is told about (for example `~/Projects/record-scan-sealed/`). Label them by running the labeler with `RS_DATA_DIR` pointed there. Score them yourself once per phase.
 
-## Part D: data folder items that become removable
-
-Nothing here is deleted by an agent. Each row names the task whose completion makes the item dead; after that task's review is clean, the controller lists the row in its report and Gautham deletes it.
-
-| Item under `~/Projects/record-scan-data` | Size | Removable after | Why |
-|---|---|---|---|
-| `metadata/uuid_to_metadata.json` | 840 MB | Task 1 (catalog.sqlite built, tests pass) | `Catalog` replaces it; regenerable from `slim_releases_with_covers.json` in a minute anyway |
-| `embeddings/clip-vit-b-32-aug13/` | 300 MB | Task 4 (its smoke test is the last reader) | November 2025 augmented shards; the one-vector design never uses them |
-| `_archive-album-annotator-2025-11/` | about 28 MB after cleanup | Task 3 (labeler merged) | the GitHub repo gsajith/album-annotator is archived and holds the same history |
-| `_archive-mbdump-2025-11/` | about 1.1 GB after cleanup, almost all `.git` | Task 6 (delta fetch merged) | the scripts are in `pipeline/legacy/`; only the August 2025 commit history remains here |
-| `~/.cache/clip` (1.2 GB), `~/.cache/torch/hub/checkpoints` (1.2 GB), HF `models--openai--clip-vit-base-patch32` (1.1 GB) | 3.5 GB | now | the OpenAI `clip` package, DINOv2 hub weights and transformers CLIP are not used by the new retrieval core |
-| HF `models--timm--vit_base_patch32_clip_224.openai` | 577 MB | keep | open_clip loads the `clip-vit-b-32` baseline from this cache |
-
-Already removed on 2026-10-24 at Gautham's request: `_archive-mbdump-2025-11/venv` (1.4 GB) and `_archive-album-annotator-2025-11/node_modules` (419 MB).
-
-## Part E: human checkpoints
+### Checkpoints
 
 Review by agents gates code quality. These five gates are judgment and feel, which the essay above argues cannot be delegated. A task that reaches its checkpoint is not complete until Gautham has done the item and the ledger records it.
 
@@ -84,7 +75,7 @@ Review by agents gates code quality. These five gates are judgment and feel, whi
 
 Also before Phase B spends money: ten minutes reading the DINOv3 license text and Table 14 of the DINOv3 paper, the two sources the whole backbone choice leans on, because the research report flagged its own extraction of one of them as unverified.
 
-## Part C: layout added by this plan
+## Layout
 
 ```
 record-scan/
@@ -119,11 +110,11 @@ record-scan/
 
 Dependency order: Task 1 -> Task 2 -> Task 3; Task 4 after Task 1; Task 5 and Task 6 after Task 1 and independent of each other; Task 7 after Tasks 2, 4 and 5; Task 8 after Task 4; Task 9 after Task 7. Tasks 3, 4, 5, 6 can run as parallel workers once Tasks 1 and 2 land, since they touch disjoint directories.
 
-### Task 1: catalog in SQLite with full-text search
+### Task 1: catalog in SQLite with full-text search (done, f270bb2)
 
 **Files:**
 - Create: `pipeline/metadata/catalog.py`, `pipeline/metadata/build_catalog_db.py`, `pipeline/tests/test_catalog.py`
-- Modify: `pipeline/config.py` (new constants listed in Part C), `pipeline/requirements.txt` (no new deps; sqlite3 is stdlib)
+- Modify: `pipeline/config.py` (new constants listed under Layout), `pipeline/requirements.txt` (no new deps; sqlite3 is stdlib)
 
 **Interfaces (produces):**
 ```python
@@ -147,11 +138,11 @@ def build(releases_json: Path, artists_json: Path, out: Path, delta_dir: Path | 
 ```
 Load `slim_releases_with_covers.json` and `release_slim_artists.json` whole (about 6 GB of RAM, fine on the Mac), insert in one transaction with `executemany`, then build the FTS table. Also ingest `delta/releases/*.jsonl` when present (Task 6's output, which carries `release_group`).
 
-- [ ] Step 1: Failing tests: `test_normalize` ("The Beatles" -> "beatles"; "Beatles, The" -> "beatles"; "Björk" -> "bjork"; "Abbey Road (Remastered)" keeps its words), `test_build_and_search_tmp_db` (three fake releases written to `tmp_path` JSON, build, `search("bjork")` returns the Björk release, `search("beatl")` prefix-matches, `release(mbid)` round-trips), `test_find_exact`, `test_missing_db_exits`.
-- [ ] Step 2: Run, FAIL.
-- [ ] Step 3: Implement. Add the new config constants.
-- [ ] Step 4: `pipeline/.venv/bin/pytest pipeline/tests/test_catalog.py -v` passes. Real build: `python -m pipeline.metadata.build_catalog_db` writes `catalog.sqlite` (expect 3,129,812 rows, 600 MB to 1 GB, under 10 minutes); `python -c "from pipeline.metadata.catalog import Catalog; print(Catalog().search('abbey road')[:3])"` returns Beatles releases.
-- [ ] Step 5: Commit `feat(pipeline): sqlite catalog with full-text search`.
+- [x] Step 1: Failing tests: `test_normalize` ("The Beatles" -> "beatles"; "Beatles, The" -> "beatles"; "Björk" -> "bjork"; "Abbey Road (Remastered)" keeps its words), `test_build_and_search_tmp_db` (three fake releases written to `tmp_path` JSON, build, `search("bjork")` returns the Björk release, `search("beatl")` prefix-matches, `release(mbid)` round-trips), `test_find_exact`, `test_missing_db_exits`.
+- [x] Step 2: Run, FAIL.
+- [x] Step 3: Implement. Add the new config constants.
+- [x] Step 4: `pipeline/.venv/bin/pytest pipeline/tests/test_catalog.py -v` passes. Real build: `python -m pipeline.metadata.build_catalog_db` writes `catalog.sqlite` (expect 3,129,812 rows, 600 MB to 1 GB, under 10 minutes); `python -c "from pipeline.metadata.catalog import Catalog; print(Catalog().search('abbey road')[:3])"` returns Beatles releases.
+- [x] Step 5: Commit `feat(pipeline): sqlite catalog with full-text search`.
 
 ### Task 2: gold and wild set format, loader, and video frame sampler
 
@@ -347,9 +338,7 @@ Device timing: iOS via Xcode's Core ML performance report on a connected iPhone 
 
 ### Task 9: docs for Phase A
 
-- [ ] Update `README.md` (layout from Part C, how to run each instrument, where results live) and `CLAUDE.md` (data layout, the no-training-on-eval rule, HF token, rate limits). Commit `docs: phase a instruments and data layout`.
-
----
+- [ ] Update `README.md` (the Layout section, how to run each instrument, where results live) and `CLAUDE.md` (data layout, the no-training-on-eval rule, HF token, rate limits). Commit `docs: phase a instruments and data layout`.
 
 ## Phases B to D: outline, to be detailed after Task 7 and Task 8 report
 
@@ -367,9 +356,27 @@ Each later task is written at full detail only once the measurements it depends 
 
 ---
 
+## Data you can delete, and when
+
+Nothing here is deleted by an agent. Each row names the task whose completion makes the item dead; after that task's review is clean, the controller lists the row in its report and Gautham deletes it.
+
+| Item under `~/Projects/record-scan-data` | Size | Removable after | Why |
+|---|---|---|---|
+| `metadata/uuid_to_metadata.json` | 840 MB | Task 1 (catalog.sqlite built, tests pass) | `Catalog` replaces it; regenerable from `slim_releases_with_covers.json` in a minute anyway |
+| `embeddings/clip-vit-b-32-aug13/` | 300 MB | Task 4 (its smoke test is the last reader) | November 2025 augmented shards; the one-vector design never uses them |
+| `_archive-album-annotator-2025-11/` | about 28 MB after cleanup | Task 3 (labeler merged) | the GitHub repo gsajith/album-annotator is archived and holds the same history |
+| `_archive-mbdump-2025-11/` | about 1.1 GB after cleanup, almost all `.git` | Task 6 (delta fetch merged) | the scripts are in `pipeline/legacy/`; only the August 2025 commit history remains here |
+| `~/.cache/clip` (1.2 GB), `~/.cache/torch/hub/checkpoints` (1.2 GB), HF `models--openai--clip-vit-base-patch32` (1.1 GB) | 3.5 GB | now | the OpenAI `clip` package, DINOv2 hub weights and transformers CLIP are not used by the new retrieval core |
+| HF `models--timm--vit_base_patch32_clip_224.openai` | 577 MB | keep | open_clip loads the `clip-vit-b-32` baseline from this cache |
+
+Already removed on 2026-10-24 at Gautham's request: `_archive-mbdump-2025-11/venv` (1.4 GB) and `_archive-album-annotator-2025-11/node_modules` (419 MB).
+
+---
+
 ## Self-review notes
 
 - Spec coverage: report Steps 0 to 4 map to Tasks 2, 3 (Step 0), 5 (Step 1), 4 and 7 (Step 2), 7 (Step 3), 8 (Step 4). The catalog update (Gautham's question B) is Task 6 and D11. The labeler (his labeling-app idea) is Task 3 with D8. Simulator fidelity (question C) is Task 11's calibration design plus H3. Candid photos (question A) are D9, H4 and the wild set in Tasks 2 and 3. Phone hardware is covered in Task 8 (compute-unit placement, first-load, memory) and Task 11 (battery, thermal).
 - Names reused across tasks are defined once: `Release`, `Catalog`, `normalize`, `album_key`, `Label`, `split_for`, `load_labels`, `append_label`, `Embedder`, `load_embedder`, `query_views`, `embed_images`, `embed_prefix`, `build_index`, `Identifier`, `Match`, `EvalItem`, `is_hit`, `EvalReport`, `run_eval`, `process_prefix`, `cluster`, `parity`.
 - Review focus items 1 to 5 are owned by Tasks 2, 2 and 3, 1, 5, 6.
 - Proportion: Phase A is specified to signature and test level; Phases B to D are deliberately outlines because their inputs do not exist yet.
+
