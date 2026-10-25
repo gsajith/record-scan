@@ -18,7 +18,11 @@
 - One label record format, defined once in `pipeline/gold/labels.py` and mirrored in `annotator/lib/labels.ts`, with a shared test vector so the two never drift.
 - Gold photos and the `eval` half of the wild set never enter any training, simulator fitting, or background bank. The split is a deterministic hash, assigned once, shown read-only.
 - External services: Cover Art Archive thumbnails may be hot-linked by the labeler for display only. The MusicBrainz web service gets at most one request per second with a `User-Agent` naming the project and a contact address. Internet Archive search uses the scrape API with cursor resume.
-- Every measured number lands in `docs/results/<date>-<topic>.md` with the command that produced it, so the report's decision gates are checked against written evidence.
+- Every measured number lands in `docs/results/<date>-<topic>.md` with the command that produced it, the git SHA, and a hash of the eval config, so the report's decision gates are checked against written evidence. A number without provenance counts as no number.
+- Eval integrity (from Dan Luu's "There's no point at which turning your brain off will work", 2026): the hit rule, the eval and sim split, the distractor sampler and its seeds are locked in their own reviewed commit before any model work. A later change to any of them needs a recorded ruling in the ledger and its own commit; it never lands in a task that also touches model, simulator or training code. Reviewers of model tasks check the diff for edits to `eval.py`, `labels.py`, seeds and hit logic and report any as Important.
+- Sealed holdout: Gautham keeps about a third of his records (videos and frames) outside `RS_DATA_DIR`, in a folder no agent is told about, labeled with the same labeler against a second data dir. It is scored once per phase, by Gautham, with the same `eval.py`. Agents never see it.
+- Surprising numbers are bugs until shown otherwise: if a frozen backbone scores far below its published benchmark, or a student beats its teacher, the task stops at that result, the controller checks preprocessing and data before anything else, and no training is dispatched to "fix" it.
+- Every eval run writes a miss gallery, `docs/results/<run>/misses.html`: each missed photo beside the top five proposed covers with scores, plus the twenty lowest-scoring hits. Gates are decided from the gallery and the table together, never from the table alone.
 
 ## Review focus
 
@@ -27,6 +31,7 @@
 3. Catalog search misses on accents and case: "bjork" finds Björk and "the beatles" finds "Beatles, The"; FTS5 is built with `unicode61 remove_diacritics 2`. Test in Task 1.
 4. A corrupt JPEG or an unmounted drive mid-run: the gallery pass logs and skips the file, finishes the prefix, and resumes per prefix on rerun; it never creates folders under `/Volumes`. Test in Task 5.
 5. Rate-limit violations: the delta fetcher sleeps at least one second between MusicBrainz requests, backs off on 503, and resumes from its cursor file after a crash. Test in Task 6.
+6. Metric gaming: a model task that changes the hit rule, the split, seeds or test assertions so that a number improves without the model improving. Reviewers check for it in every task from Task 4 on; the eval-integrity constraint forbids it in the same commit.
 
 ---
 
@@ -36,6 +41,7 @@
 - **D9 Candid internet photos are allowed for evaluation and simulator fitting, with a license filter and a one-time split.** Sources: Flickr Creative Commons, Wikimedia Commons, Pexels, Unsplash, Creative Commons YouTube frames. No Instagram, nothing unlicensed. Half (by hash) feeds simulator statistics and backgrounds; half is evaluation. Nothing from either half is used to train weights unless its license is CC0 or equivalent and Gautham says so.
 - **D10 Gallery working copy at 256 px short side, JPEG quality 90, in WebDataset tar shards keyed by MBID.** One pass over the drive produces it together with a 64-bit pHash per cover. Later steps read the shards, not the drive.
 - **D11 Catalog updates come from the Cover Art Archive's Internet Archive index, not from a new dump.** A monthly job lists items added or updated since the last run, downloads new front covers, and fetches metadata from the MusicBrainz web service. A full dump re-slim stays an annual job and is where the release-group id gets added.
+- **D13 Oldest target phone (open, Gautham decides before Task 8 reports).** The 30 ms p95 latency bar and the memory budget are defined against the oldest phone the app must run well on, one iPhone and one Android. Until named, the export spike reports numbers for every phone available and the gate cannot be applied.
 - **D12 Mobile shell framework: proposed Expo (React Native) with VisionCamera frame processors and `react-native-executorch` for one codebase on both platforms; native Swift and Kotlin if the export spike shows the React Native path cannot hit the latency bar.** Not needed in Phase A: iOS device timing comes from Xcode's Core ML performance report on a connected iPhone, which needs no app. Gautham confirms or overrides before Phase B's Task 12.
 
 ## Part B: human tasks (only Gautham can do these)
@@ -47,6 +53,7 @@
 - **H5** Accept the DINOv3 license on Hugging Face (`facebook/dinov3-*` are gated), run `huggingface-cli login` on the Mac, and put the token in the pipeline `.env` as `HF_TOKEN`. Also read Apple's MobileCLIP2 model terms and say yes or no to including it in the sweep.
 - **H6** Confirm or override D12 before Phase B.
 - **H7** Before Phase B: an account on one GPU provider (RunPod or Modal) with a small balance; the whole plan budgets under $100.
+- **H8** Sealed holdout: pick about a third of your records before shooting H2, shoot them the same way, and keep their videos and frames in a folder outside `RS_DATA_DIR` that no agent is told about (for example `~/Projects/record-scan-sealed/`). Label them by running the labeler with `RS_DATA_DIR` pointed there. Score them yourself once per phase.
 
 ## Part D: data folder items that become removable
 
@@ -62,6 +69,20 @@ Nothing here is deleted by an agent. Each row names the task whose completion ma
 | HF `models--timm--vit_base_patch32_clip_224.openai` | 577 MB | keep | open_clip loads the `clip-vit-b-32` baseline from this cache |
 
 Already removed on 2026-10-24 at Gautham's request: `_archive-mbdump-2025-11/venv` (1.4 GB) and `_archive-album-annotator-2025-11/node_modules` (419 MB).
+
+## Part E: human checkpoints
+
+Review by agents gates code quality. These five gates are judgment and feel, which the essay above argues cannot be delegated. A task that reaches its checkpoint is not complete until Gautham has done the item and the ledger records it.
+
+| After | Gautham does | Why an agent cannot |
+|---|---|---|
+| Task 3 | Uses the labeler for an hour on real inbox items before it is called done; friction notes go back as a fix round | the reviewer can check routes, not whether fifty labels in a sitting is bearable |
+| Task 4 | Reads `pipeline/retrieval/eval.py` and `pipeline/gold/labels.py` himself (the hit rule, the split, the slices) and signs off in the ledger | everything downstream rests on this code; an eval that quietly flatters the model invalidates every later number |
+| Task 7 | Picks the teacher and student shortlist from the miss gallery and the table together, and names D13 | the gallery shows what kind of photo fails; the table cannot |
+| Task 11 | Looks at fifty synthetic photos beside fifty real ones of the same covers and says whether they could be mistaken for each other | the domain classifier measures a gap; a person recognizes what is wrong with the fake |
+| Task 17 | Uses the app in a record store on the sealed holdout records | the ship bar is a feeling of trust, measured last by the numbers |
+
+Also before Phase B spends money: ten minutes reading the DINOv3 license text and Table 14 of the DINOv3 paper, the two sources the whole backbone choice leans on, because the research report flagged its own extraction of one of them as unverified.
 
 ## Part C: layout added by this plan
 
@@ -236,7 +257,7 @@ def build_mini_gallery(items: list[EvalItem], distractors: int, seed: int) -> li
 class EvalReport:
     r1: float; r5: float; per_tag: dict[str, tuple[float, int]]; neg_max: float; pos_min_top1: float; micro_ap: float; rows: list[dict]
     def to_markdown(self) -> str
-def run_eval(model: str, set_name: str, distractors: int, views: int, px: int, seed: int, work_dir: Path) -> EvalReport   # writes docs/results/<date>-eval-<model>-<set>.md and a .json beside it
+def run_eval(model: str, set_name: str, distractors: int, views: int, px: int, seed: int, work_dir: Path) -> EvalReport   # writes docs/results/<date>-eval-<model>-<set>/report.md, report.json (with git SHA, config hash, command) and misses.html (each miss beside its top-5 covers with scores, plus the 20 lowest-scoring hits; thumbnails hot-linked from coverartarchive.org front-250)
 ```
 Per-tag recall is reported with its count so a slice of three photos is visibly weak. `micro_ap` follows SSCD: positives and negatives ranked by top-1 score, average precision of "is a positive and hit".
 
