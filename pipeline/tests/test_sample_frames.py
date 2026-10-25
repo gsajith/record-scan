@@ -33,3 +33,16 @@ def test_process_inbox_moves_videos_to_done(tmp_path):
     assert process_inbox(tmp_path / "gold", fps=1.0, max_frames=8) == 3
     assert (inbox / "done" / "one.MOV").exists()
     assert sorted(p.name for p in inbox.glob("*.jpg")) == ["one-01.jpg", "one-02.jpg", "one-03.jpg"]
+
+
+@needs_ffmpeg
+def test_process_inbox_skips_a_reused_name(tmp_path):
+    inbox = tmp_path / "gold" / "inbox"
+    (inbox / "done").mkdir(parents=True)
+    (inbox / "done" / "IMG_0001.MOV").write_text("earlier video")
+    make_video(inbox / "IMG_0001.MOV")
+    make_video(inbox / "IMG_0002.mov")
+    make_video(inbox / "IMG_0002.mp4")
+    assert process_inbox(tmp_path / "gold", fps=1.0, max_frames=8) == 3
+    assert (inbox / "done" / "IMG_0001.MOV").read_text() == "earlier video"
+    assert (inbox / "IMG_0001.MOV").exists() and (inbox / "IMG_0002.mp4").exists()

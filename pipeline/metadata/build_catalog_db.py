@@ -42,7 +42,8 @@ def _jsonl(folder: Path):
 def build(releases_json: Path, artists_json: Path, out: Path, delta_dir: Path | None) -> int:
     """Write the catalog to out + ".tmp", then move it over out. Returns the release count."""
     artists: dict[str, dict] = json.loads(artists_json.read_text())
-    # Keyed by mbid so a delta row replaces the dump row it updates
+    # Keyed by mbid so a delta row replaces the dump row it updates. The delta fetcher writes
+    # whole rows, so a field missing from a delta row is missing upstream too.
     releases = {r["id"]: r for r in json.loads(releases_json.read_text())}
     if delta_dir is not None:
         if (delta_dir / "artists").is_dir():
