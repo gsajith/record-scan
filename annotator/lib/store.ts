@@ -2,7 +2,7 @@
 // <set>/photos/<sha1>.jpg and one JSON line per label in <set>/labels.jsonl.
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,8 +32,13 @@ export async function ingestImage(setDir: string, input: Buffer): Promise<{ sha1
     mkdirSync(join(setDir, "photos"), { recursive: true });
     // Write then rename, so a crash never leaves a half-written photo under its final name
     const partial = `${path}.${randomUUID()}.partial`;
-    writeFileSync(partial, jpeg);
-    renameSync(partial, path);
+    try {
+      writeFileSync(partial, jpeg);
+      renameSync(partial, path);
+    } catch (e) {
+      rmSync(partial, { force: true }); // e.g. a full disk; don't leave the fragment behind
+      throw e;
+    }
   }
   return { sha1, file };
 }
