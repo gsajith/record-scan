@@ -22,6 +22,15 @@ EMB_DIR = DATA_DIR / "embeddings"
 MODELS_DIR = DATA_DIR / "models"
 GOLD_DIR = DATA_DIR / "gold"
 DETECTOR_DIR = DATA_DIR / "detector"
+WILD_DIR = DATA_DIR / "wild"
+GALLERY256_DIR = DATA_DIR / "gallery256"
+DELTA_DIR = DATA_DIR / "delta"
+EXPORTS_DIR = DATA_DIR / "exports"
+LIGHTBANK_DIR = DATA_DIR / "lightbank"
+CATALOG_DB = META_DIR / "catalog.sqlite"
+
+# Measured numbers live in the repo, one file per run
+RESULTS_DIR = Path(__file__).resolve().parent.parent / "docs" / "results"
 
 # MusicBrainz release ids, lowercase. Checked before an id goes into a URL or a path.
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
