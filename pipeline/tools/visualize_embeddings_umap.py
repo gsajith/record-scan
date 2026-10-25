@@ -4,7 +4,7 @@ visualize_embeddings_umap_all.py
 --------------------------------
 Loads all .npz embedding shards, merges them, and visualizes with UMAP + Plotly + Dash.
 Clicking a point displays the corresponding album cover image.
-Run from the repo root: python -m pipeline.tools.visualize_embeddings_umap <shard_dir>
+Run from the repo root: python -m pipeline.tools.visualize_embeddings_umap [shard_dir]
 """
 
 import argparse
@@ -18,8 +18,10 @@ import umap
 from pipeline import config
 
 parser = argparse.ArgumentParser(description="Visualize embedding shards with UMAP.")
-parser.add_argument("shard_dir", help="folder of .npz shards, e.g. under config.EMB_DIR")
+parser.add_argument("shard_dir", nargs="?", default=config.EMB_DIR,
+                    help="folder of .npz shards (default: config.EMB_DIR)")
 SHARD_DIR = parser.parse_args().shard_dir
+config.require_image_root()  # the click handler reads covers through config.image_path
 
 # ---- CONFIG ----
 RANDOM_SEED = 42
