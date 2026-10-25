@@ -1,14 +1,17 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Release } from "@/lib/catalog";
-import { KINDS, TAGS, type Kind, type Tag } from "@/lib/labels";
+import { hotkeyAction, TAG_KEYS } from "@/lib/hotkeys";
+import { KINDS, TAGS, type Kind, type SetName, type Split, type Tag } from "@/lib/labels";
+import type { QueueItem } from "@/lib/queue";
 import styles from "./page.module.css";
 
-type Photo = { sha1: string; file: string };
 type Result = Release & { thumb: string };
+type Counts = Record<SetName, Record<Split, number>>;
 
 // Gold only for now; the wild set, with its source and license fields, comes next
 const SET = "gold";
+const KIND_KEYS: Record<Kind, string> = { positive: "P", negative: "N", unknown: "U" };
 
 // Browsers often give HEIC files no type, so the extension counts too
 const IMAGE_EXT = /\.(heic|heif)$/i;
@@ -21,49 +24,102 @@ function errorText(body: unknown, fallback: string): string {
   return typeof body === "object" && body !== null && "error" in body ? String(body.error) : fallback;
 }
 
+type QueueResponse = { next: QueueItem | null; remaining: number; counts: Counts };
+
+async function fetchQueue(skip: string[]): Promise<QueueResponse> {
+  const res = await fetch(`/api/queue?${new URLSearchParams({ set: SET, skip: skip.join(",") })}`);
+  const body = await res.json();
+  if (!res.ok) throw new Error(errorText(body, "Couldn't load the next photo."));
+  return body;
+}
+
+/** Focus is in a field where letters and Enter mean typing, not shortcuts. */
+function isTyping(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.matches('input[type="search"], input[type="text"], textarea, select');
+}
+
 export default function LabelerPage() {
-  const [photo, setPhoto] = useState<Photo | null>(null);
-  const [busy, setBusy] = useState<"ingest" | "save" | null>(null);
+  const [photo, setPhoto] = useState<QueueItem | null>(null);
+  const [remaining, setRemaining] = useState(0);
+  const [counts, setCounts] = useState<Counts | null>(null);
+  const [skipped, setSkipped] = useState<string[]>([]);
+  const [busy, setBusy] = useState<"load" | "ingest" | "save" | null>("load");
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Result[]>([]);
+  const [active, setActive] = useState(0);
   const [searchError, setSearchError] = useState<string | null>(null);
+  // The album and kind carry over to the next photo: a video's frames are all the same record
   const [picked, setPicked] = useState<Result | null>(null);
   const [kind, setKind] = useState<Kind>("positive");
   const [tags, setTags] = useState<Tag[]>([]);
   const [notes, setNotes] = useState("");
 
-  // Clear the choices for the next photo
-  const resetForm = useCallback(() => {
-    setQuery("");
-    setResults([]);
-    setPicked(null);
-    setKind("positive");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [focusSearchTick, setFocusSearchTick] = useState(0);
+  const focusSearch = useCallback(() => setFocusSearchTick((n) => n + 1), []);
+
+  // Tags and notes describe one photo, so they start empty on the next
+  const clearPerPhoto = useCallback(() => {
     setTags([]);
     setNotes("");
+    setQuery("");
+    setResults([]);
   }, []);
 
-  const ingest = useCallback(async (file: File) => {
-    setBusy("ingest");
-    setError(null);
-    setStatus(null);
-    const form = new FormData();
-    form.append("set", SET);
-    form.append("file", file);
-    try {
-      const res = await fetch("/api/ingest", { method: "POST", body: form });
-      const body = await res.json();
-      if (!res.ok) throw new Error(errorText(body, "Couldn't save that photo."));
-      setPhoto({ sha1: body.sha1, file: body.file });
-      resetForm();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(null);
-    }
-  }, [resetForm]);
+  const applyQueue = useCallback(
+    (body: QueueResponse, wantSearch: boolean) => {
+      setPhoto(body.next);
+      setRemaining(body.remaining);
+      setCounts(body.counts);
+      clearPerPhoto();
+      if (body.next && wantSearch) focusSearch();
+    },
+    [clearPerPhoto, focusSearch],
+  );
+
+  // Callers set busy first; it starts as "load" for the first fetch
+  const loadNext = useCallback(
+    (skip: string[], wantSearch: boolean) =>
+      fetchQueue(skip)
+        .then((body) => applyQueue(body, wantSearch))
+        .catch((e: Error) => setError(e.message))
+        .finally(() => setBusy(null)),
+    [applyQueue],
+  );
+
+  useEffect(() => {
+    loadNext([], true);
+  }, [loadNext]);
+
+  useEffect(() => {
+    if (focusSearchTick > 0) searchRef.current?.focus();
+  }, [focusSearchTick]);
+
+  const ingest = useCallback(
+    async (file: File) => {
+      setBusy("ingest");
+      setError(null);
+      setStatus(null);
+      const form = new FormData();
+      form.append("set", SET);
+      form.append("file", file);
+      try {
+        const res = await fetch("/api/ingest", { method: "POST", body: form });
+        const body = await res.json();
+        if (!res.ok) throw new Error(errorText(body, "Couldn't save that photo."));
+        setPhoto({ sha1: body.sha1, file: body.file });
+        clearPerPhoto();
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setBusy(null);
+      }
+    },
+    [clearPerPhoto],
+  );
 
   // Paste an image from anywhere on the page
   useEffect(() => {
@@ -88,6 +144,7 @@ export default function LabelerPage() {
         const body = await res.json();
         if (!res.ok) throw new Error(errorText(body, "Search failed."));
         setResults(body.results);
+        setActive(0);
         setSearchError(null);
       } catch (e) {
         if (!controller.signal.aborted) setSearchError((e as Error).message);
@@ -99,8 +156,15 @@ export default function LabelerPage() {
     };
   }, [query]);
 
+  // Keep the highlighted search result in view while arrowing through the list
+  useEffect(() => {
+    document.getElementById(`result-${active}`)?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+
+  const canSave = photo !== null && busy === null && (kind !== "positive" || picked !== null);
+
   async function save() {
-    if (!photo) return;
+    if (!photo || !canSave) return;
     setBusy("save");
     setError(null);
     const label = {
@@ -121,17 +185,67 @@ export default function LabelerPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(errorText(body, "Couldn't save the label."));
-      setStatus(kind === "positive" && picked ? `Saved as ${picked.title}. Paste the next photo.` : `Saved as ${kind}. Paste the next photo.`);
-      setPhoto(null);
-      resetForm();
+      setStatus(kind === "positive" && picked ? `Saved as ${picked.title}` : `Saved as ${kind}`);
     } catch (e) {
       setError((e as Error).message);
-    } finally {
       setBusy(null);
+      return;
+    }
+    await loadNext(skipped, kind === "positive" && picked === null);
+  }
+
+  function skip() {
+    if (!photo) return;
+    const next = [...skipped, photo.sha1];
+    setSkipped(next);
+    setStatus(null);
+    setBusy("load");
+    loadNext(next, kind === "positive" && picked === null);
+  }
+
+  function toggleTag(t: Tag) {
+    setTags((current) => (current.includes(t) ? current.filter((x) => x !== t) : [...current, t]));
+  }
+
+  // Shortcuts; see lib/hotkeys.ts. Re-bound each render so the handler sees current state.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      // Enter on a focused button already clicks it
+      if (e.key === "Enter" && e.target instanceof HTMLButtonElement) return;
+      const action = hotkeyAction({ key: e.key, typing: isTyping(e.target), modifier: e.metaKey || e.ctrlKey || e.altKey });
+      if (!action || !photo) return;
+      e.preventDefault();
+      if (action.type === "kind") setKind(action.kind);
+      else if (action.type === "tag") toggleTag(action.tag);
+      else if (action.type === "skip") skip();
+      else if (action.type === "search" || (action.type === "save" && !canSave && kind === "positive")) {
+        setKind("positive");
+        focusSearch();
+      } else if (action.type === "save") save();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  function onSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((i) => Math.max(0, Math.min(results.length - 1, i + (e.key === "ArrowDown" ? 1 : -1))));
+    } else if (e.key === "Enter" && results[active]) {
+      // Pick and leave the box, so the next Enter saves
+      e.preventDefault();
+      setPicked(results[active]);
+      e.currentTarget.blur();
+    } else if (e.key === "Escape") {
+      e.currentTarget.blur();
     }
   }
 
-  const canSave = photo !== null && busy === null && (kind !== "positive" || picked !== null);
+  let emptyText = status ? `${status}. ` : "";
+  if (busy === "load") emptyText = "Loading…";
+  else if (busy === "ingest") emptyText = "Saving photo…";
+  else if (remaining > 0) emptyText += "You skipped the rest. Reload the page to see them again.";
+  else emptyText += "Nothing left in the inbox. Paste a photo, or drop one here.";
 
   return (
     <main
@@ -149,7 +263,7 @@ export default function LabelerPage() {
           <img src={`/api/image/${SET}/${photo.sha1}`} alt="Photo being labeled" />
         ) : (
           <div className={styles.empty}>
-            <p>{busy === "ingest" ? "Saving photo…" : status ?? "Paste a photo, or drop one here."}</p>
+            <p>{emptyText}</p>
             <label className={styles.button}>
               Choose a file
               <input
@@ -168,14 +282,22 @@ export default function LabelerPage() {
       </section>
 
       <section className={styles.panel} aria-label="Label">
-        <h1 className={styles.heading}>Gold set</h1>
+        <div className={styles.strip} aria-live="polite">
+          <h1 className={styles.heading}>Gold set</h1>
+          {counts && (
+            <p className={styles.hint}>
+              Gold {counts.gold.eval} eval · Wild {counts.wild.eval} eval, {counts.wild.sim} sim · {remaining} to label
+            </p>
+          )}
+          {photo && status && <p className={styles.saved}>{status}</p>}
+        </div>
 
         <fieldset className={styles.kinds} disabled={!photo}>
           <legend>Kind</legend>
           {KINDS.map((k) => (
             <label key={k} className={k === kind ? styles.kindOn : styles.kind}>
               <input type="radio" name="kind" value={k} checked={k === kind} onChange={() => setKind(k)} />
-              {k}
+              {k} <kbd>{KIND_KEYS[k]}</kbd>
             </label>
           ))}
         </fieldset>
@@ -183,11 +305,17 @@ export default function LabelerPage() {
         {kind === "positive" && (
           <div className={styles.search}>
             <input
+              ref={searchRef}
               type="search"
               placeholder="Search title or artist"
-              aria-label="Search the catalog"
+              aria-label="Search the catalog (press / to focus)"
+              role="combobox"
+              aria-expanded={results.length > 0}
+              aria-controls="results"
+              aria-activedescendant={results[active] ? `result-${active}` : undefined}
               value={query}
               disabled={!photo}
+              onKeyDown={onSearchKeyDown}
               onChange={(e) => {
                 setQuery(e.target.value);
                 if (!e.target.value.trim()) setResults([]);
@@ -200,13 +328,19 @@ export default function LabelerPage() {
             )}
             {searchError && <p className={styles.error}>{searchError}</p>}
             {query.trim() && !searchError && results.length === 0 && <p className={styles.hint}>No releases match.</p>}
-            <ul className={styles.results}>
-              {results.map((r) => (
+            <ul className={styles.results} id="results" role="listbox" aria-label="Search results">
+              {results.map((r, i) => (
                 <li key={r.mbid}>
                   <button
                     type="button"
-                    className={r.mbid === picked?.mbid ? styles.resultOn : styles.result}
-                    aria-pressed={r.mbid === picked?.mbid}
+                    id={`result-${i}`}
+                    role="option"
+                    aria-selected={r.mbid === picked?.mbid}
+                    className={[
+                      r.mbid === picked?.mbid ? styles.resultOn : styles.result,
+                      i === active ? styles.resultActive : "",
+                    ].join(" ")}
+                    tabIndex={-1}
                     onClick={() => setPicked(r)}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element -- Cover Art Archive thumbnail, hot-linked for display only */}
@@ -233,14 +367,10 @@ export default function LabelerPage() {
 
         <fieldset className={styles.tags} disabled={!photo}>
           <legend>Tags</legend>
-          {TAGS.map((t) => (
+          {TAGS.map((t, i) => (
             <label key={t}>
-              <input
-                type="checkbox"
-                checked={tags.includes(t)}
-                onChange={(e) => setTags(e.target.checked ? [...tags, t] : tags.filter((x) => x !== t))}
-              />
-              {t}
+              <input type="checkbox" checked={tags.includes(t)} onChange={() => toggleTag(t)} />
+              {t} <kbd>{TAG_KEYS[i]}</kbd>
             </label>
           ))}
         </fieldset>
@@ -255,9 +385,14 @@ export default function LabelerPage() {
             {error}
           </p>
         )}
-        <button type="button" className={styles.save} disabled={!canSave} onClick={save}>
-          {busy === "save" ? "Saving…" : "Save"}
-        </button>
+        <div className={styles.actions}>
+          <button type="button" className={styles.skip} disabled={!photo || busy !== null} onClick={skip}>
+            Skip <kbd>S</kbd>
+          </button>
+          <button type="button" className={styles.save} disabled={!canSave} onClick={save}>
+            {busy === "save" ? "Saving…" : "Save"} <kbd>↵</kbd>
+          </button>
+        </div>
       </section>
     </main>
   );

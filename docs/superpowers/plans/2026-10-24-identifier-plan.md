@@ -41,7 +41,7 @@
 
 ## Decisions
 
-- **D8 Labeler is local-only.** The `annotator/` app runs on the Mac, writes files under `RS_DATA_DIR`, and has no cloud backend. Couch use goes through Tailscale. Supabase code is removed. (Gautham, 2026-10-24.)
+- **D8 Labeler is local-only.** The `annotator/` app runs on the Mac, writes files under `RS_DATA_DIR`, and has no cloud backend. It listens on 127.0.0.1 only and refuses cross-site API calls; no Tailscale or other remote access (Gautham, 2026-10-25). Supabase code is removed. (Gautham, 2026-10-24.)
 - **D9 Candid internet photos are allowed for evaluation and simulator fitting, with a license filter and a one-time split.** Sources: Flickr Creative Commons, Wikimedia Commons, Pexels, Unsplash, Creative Commons YouTube frames. No Instagram, nothing unlicensed. Half (by hash) feeds simulator statistics and backgrounds; half is evaluation. Nothing from either half is used to train weights unless its license is CC0 or equivalent and Gautham says so.
 - **D10 Gallery working copy at 256 px short side, JPEG quality 90, in WebDataset tar shards keyed by MBID.** One pass over the drive produces it together with a 64-bit pHash per cover. Later steps read the shards, not the drive.
 - **D11 Catalog updates come from the Cover Art Archive's Internet Archive index, not from a new dump.** A monthly job lists items added or updated since the last run, downloads new front covers, and fetches metadata from the MusicBrainz web service. A full dump re-slim stays an annual job and is where the release-group id gets added.

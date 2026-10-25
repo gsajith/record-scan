@@ -2,13 +2,13 @@
 // <set>/photos/<sha1>.jpg and one JSON line per label in <set>/labels.jsonl.
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
-import type { Label } from "./labels";
+import type { Label, Split } from "./labels";
 
 const MAX_SIDE = 1600;
 
@@ -102,4 +102,31 @@ export function appendLabel(setDir: string, label: Label): void {
   } finally {
     closeSync(fd);
   }
+}
+
+/** The latest label per sha1, like load_labels in Python. A broken line stops with its line number. */
+export function readLabels(setDir: string): Map<string, Label> {
+  const latest = new Map<string, Label>();
+  let text: string;
+  try {
+    text = readFileSync(join(setDir, "labels.jsonl"), "utf8");
+  } catch {
+    return latest; // no labels yet
+  }
+  text.split("\n").forEach((line, i) => {
+    if (!line.trim()) return;
+    try {
+      const label = JSON.parse(line) as Label;
+      latest.set(label.sha1, label);
+    } catch {
+      throw new Error(`${join(setDir, "labels.jsonl")} line ${i + 1} is not valid JSON`);
+    }
+  });
+  return latest;
+}
+
+export function countLabels(setDir: string): Record<Split, number> {
+  const counts = { eval: 0, sim: 0 };
+  for (const label of readLabels(setDir).values()) counts[label.split] += 1;
+  return counts;
 }
