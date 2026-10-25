@@ -256,6 +256,14 @@ Per-tag recall is reported with its count so a slice of three photos is visibly 
 - [ ] Step 2: Run, FAIL. Step 3: Implement. Step 4: all pass; smoke: build an index from the 2025-11 shards (`clip-vit-b-32-aug13`, allow_pickle, cast uuids) and identify a CAA `front-500` for a uuid in prefix 00.
 - [ ] Step 5: `git rm` the two old scripts. Commit `feat(pipeline): retrieval core with seven backbones, query views and slice eval`.
 
+Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_views`, `embed.py`, the `build_index.py` rewrite and `identify.py`, with their tests. The smoke run returned each of three prefix-00 covers first. #16 (eval) and #18 (six more backbones) remain, so the steps above stay open. Notes for them:
+- The two old scripts were already removed in d3c1455, so Step 5 has nothing left to `git rm`.
+- CLIP loads as `ViT-B-32-quickgelu`, which matches how OpenAI trained the weights. The 2025-11 shards were built with plain `ViT-B-32` (GELU), so QuickGELU queries reach only 0.92 to 0.96 against their own covers. Never mix the two in one index.
+- `query_views` applies EXIF orientation first, so a portrait phone photo is not embedded sideways.
+- `identify` widens its search past k*10 neighbours when one big group, such as the 38 Abbey Road releases, fills them and fewer than k albums come back.
+- `embed.py` reads the drive only and has no `--source shards`, `--uuids` or `--px` yet. Tasks 5 and 7 add them along with their first callers.
+- HNSW at the default `ef=128` returned the right top-1 album for 99.8% of 500 noisy queries on the 2025-11 index, with no gain up to `ef=1024`. Eval at 50k distractors can use exact search if that 0.2% matters.
+
 ### Task 5: the gallery pass (Step 1): shards, hashes, duplicate clusters
 
 **Files:**
@@ -363,7 +371,7 @@ Nothing here is deleted by an agent. Each row names the task whose completion ma
 | Item under `~/Projects/record-scan-data` | Size | Removable after | Why |
 |---|---|---|---|
 | `metadata/uuid_to_metadata.json` | 840 MB | Task 1 (catalog.sqlite built, tests pass) | `Catalog` replaces it; regenerable from `slim_releases_with_covers.json` in a minute anyway |
-| `embeddings/clip-vit-b-32-aug13/` | 300 MB | Task 4 (its smoke test is the last reader) | November 2025 augmented shards; the one-vector design never uses them |
+| `embeddings/clip-vit-b-32-aug13/` | 1.1 GB with the smoke index | issue #15 (Task 4's CLIP smoke test was the last reader) | November 2025 augmented shards built with the GELU config; the one-vector design never uses them |
 | `_archive-album-annotator-2025-11/` | about 28 MB after cleanup | Task 3 (labeler merged) | the GitHub repo gsajith/album-annotator is archived and holds the same history |
 | `_archive-mbdump-2025-11/` | about 1.1 GB after cleanup, almost all `.git` | Task 6 (delta fetch merged) | the scripts are in `pipeline/legacy/`; only the August 2025 commit history remains here |
 | `~/.cache/clip` (1.2 GB), `~/.cache/torch/hub/checkpoints` (1.2 GB), HF `models--openai--clip-vit-base-patch32` (1.1 GB) | 3.5 GB | now | the OpenAI `clip` package, DINOv2 hub weights and transformers CLIP are not used by the new retrieval core |
