@@ -4,9 +4,8 @@ import shutil
 import pytest
 import requests
 
-from pipeline.metadata.build_catalog_db import build
 from pipeline.metadata.catalog import Cover
-from pipeline.metadata.fetch_new_covers import best_front, get_with_backoff, plan_covers, run
+from pipeline.metadata.fetch_new_covers import Plan, best_front, covers_after, get_with_backoff, plan_covers, run
 from pipeline.tests.test_catalog import write_jsonl
 
 
@@ -48,15 +47,19 @@ def test_plan_covers_keeps_old_covers_adds_new_fronts_and_drops_deleted():
         mbid(4): [old(4, "400")],                     # release gone from the new dump
         mbid(5): [old(5, "500")],                     # unchanged
         mbid(6): [old(6, "600"), old(6, "601", primary=False, file="00/x-601.jpg")],  # primary deleted
+        mbid(7): [old(7, "700")],                     # 2025 fell back to a back cover, now has a front
     }
-    releases = {mbid(1), mbid(2), mbid(3), mbid(5), mbid(6)}  # 3 is new to us
-    cover_release = {100: 11, 400: 44, 500: 55, 601: 66}       # internal release ids for ids still upstream
-    new_fronts = {11: [101, 100], 55: [], 99: [999]}           # fronts uploaded since the last dump
+    releases = {mbid(1), mbid(2), mbid(3), mbid(5), mbid(6), mbid(7)}  # 3 is new to us
+    cover_release = {100: 11, 400: 44, 500: 55, 601: 66, 700: 77}  # internal release ids, images still upstream
+    fronts = {100, 400, 500, 601}                                  # which of our images are typed Front
+    new_fronts = {11: [101, 100], 55: [], 77: [701], 99: [999]}    # fronts uploaded since the last dump
 
-    plan = plan_covers(previous, releases, cover_release, new_fronts)
+    plan = plan_covers(previous, releases, cover_release, new_fronts, fronts)
 
-    assert plan.keep == [old(1, "100"), old(5, "500"), old(6, "601", file="00/x-601.jpg")]
-    assert plan.download == [Cover(mbid(1), "101", f"00/{mbid(1)}-101.jpg", primary=False)]
+    assert plan.keep == [old(1, "100"), old(5, "500"), old(6, "601", file="00/x-601.jpg"),
+                         old(7, "700", primary=False)]
+    assert plan.download == [Cover(mbid(1), "101", f"00/{mbid(1)}-101.jpg", primary=False),
+                             Cover(mbid(7), "701", f"00/{mbid(7)}-701.jpg", primary=True)]
     assert sorted(plan.lookup) == [mbid(2), mbid(3)]
     assert plan.dropped == [old(2, "200"), old(4, "400"), old(6, "600")]
 
@@ -96,7 +99,8 @@ class ScriptedSession:
 
 def test_get_backs_off_on_503_and_dropped_connections():
     session = ScriptedSession({"u": [FakeResponse(503), requests.ConnectionError(), FakeResponse(429),
-                                     FakeResponse(503), FakeResponse(503), FakeResponse(200, "ok")]})
+                                     requests.exceptions.ChunkedEncodingError(), FakeResponse(503),
+                                     FakeResponse(200, "ok")]})
     waits: list[float] = []
     assert get_with_backoff(session, "u", sleep=waits.append).json() == "ok"
     assert waits == [5, 10, 20, 40, 60]
@@ -130,19 +134,16 @@ def caa_image(m: int, cover_id: int) -> str:
 
 @pytest.fixture
 def world(tmp_path, reload_config):
-    """A 2025 catalog (1 and 2), a newer dump (1, 2 and new 3), the cover dump, and the drive."""
+    """2025 covers (1 and 2), a newer dump (1, 2 and new 3), the cover dump, and the drive."""
     cfg = reload_config(RS_DATA_DIR=tmp_path / "data", RS_IMAGE_ROOT=tmp_path / "drive")
     (cfg.IMAGE_ROOT / "00").mkdir(parents=True)
     for m in (1, 2):
         (cfg.IMAGE_ROOT / "00" / f"{mbid(m)}.jpg").write_bytes(b"2025 cover")
     cfg.META_DIR.mkdir(parents=True)
-    old_releases = write_jsonl(tmp_path / "old.jsonl", [{"id": mbid(m), "title": f"t{m}"} for m in (1, 2)])
-    old_covers = write_jsonl(tmp_path / "old-covers.jsonl", [
+    write_jsonl(cfg.META_DIR / f"covers-{SINCE}.jsonl", [  # what the previous update left
         {"mbid": mbid(1), "cover_id": "100", "file": f"00/{mbid(1)}.jpg", "primary": True},
         {"mbid": mbid(2), "cover_id": "200", "file": f"00/{mbid(2)}.jpg", "primary": True},
     ])
-    (tmp_path / "artists.json").write_text("{}")
-    build(old_releases, tmp_path / "artists.json", old_covers, cfg.CATALOG_DB)
     write_jsonl(cfg.META_DIR / f"releases-{DATE}.jsonl",
                 [{"id": mbid(m), "title": f"t{m}", "release_group": f"rg{m}"} for m in (1, 2, 3)])
     mbdump = cfg.DATA_DIR / f"musicbrainz-dump-{DATE}" / "mbdump"
@@ -225,3 +226,15 @@ def test_dry_run_counts_the_backlog_without_requests(world, capsys):
     assert (counts.keep, counts.download, counts.lookup, counts.dropped, counts.pending) == (1, 1, 2, 1, 3)
     assert "3 to fetch" in capsys.readouterr().out
     assert not (world.META_DIR / f"covers-{DATE}.jsonl").exists()
+
+
+def test_covers_after_keeps_one_primary_and_earlier_extras():
+    back = old(7, "700", primary=False)
+    front = Cover(mbid(7), "701", f"00/{mbid(7)}-701.jpg", primary=True)
+    earlier = Cover(mbid(7), "702", f"00/{mbid(7)}-702.jpg", primary=True)  # landed by an earlier plan
+    plan = Plan(keep=[back], download=[front])
+    # The new front failed to download: the back stays primary, the earlier image joins as an extra
+    assert covers_after(plan, {earlier.file: earlier}, {mbid(7)}) == [
+        old(7, "700"), Cover(mbid(7), "702", earlier.file, primary=False)]
+    # Once it lands, the front is the primary
+    assert covers_after(plan, {front.file: front}, {mbid(7)}) == [back, front]

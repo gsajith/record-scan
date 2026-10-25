@@ -40,11 +40,10 @@ def slim_record(obj: dict) -> dict | None:
         "release_group": (obj.get("release-group") or {}).get("id"),
     }
     artists = {
-        a["id"]: _drop_empty({
-            "name": a.get("name", ""),
+        a["id"]: {"name": a.get("name", ""), **_drop_empty({  # the catalog build needs a name, even ""
             "aliases": [x["name"] for x in a.get("aliases") or [] if x.get("name")],
             "disambiguation": a.get("disambiguation"),
-        })
+        })}
         for a in credits
     }
     return {"release": _drop_empty(release), "artists": artists}
@@ -55,26 +54,37 @@ def slim_dump(dump: Path, releases_out: Path, artists_out: Path) -> int:
     tar = subprocess.Popen(["tar", "-xOf", str(dump), "mbdump/release"], stdout=subprocess.PIPE)
     assert tar.stdout is not None
     artists: dict[str, dict] = {}
-    kept = seen = 0
+    kept = seen = bad = 0
     start = time.monotonic()
     tmp = releases_out.with_name(releases_out.name + ".tmp")
-    with tmp.open("w", encoding="utf-8") as out:
-        for line in tar.stdout:
-            seen += 1
-            slim = slim_record(json.loads(line))
-            if slim is not None:
-                kept += 1
-                out.write(json.dumps(slim["release"], ensure_ascii=False) + "\n")
-                artists.update(slim["artists"])  # later credits win, as in 2025
-            if seen % 250_000 == 0:
-                print(f"{seen:,} read, {kept:,} kept, {seen / (time.monotonic() - start):,.0f} lines/s", flush=True)
+    try:
+        with tmp.open("w", encoding="utf-8") as out:
+            for line in tar.stdout:
+                seen += 1
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:  # one bad line should not cost an hour-long run
+                    bad += 1
+                    print(f"skipped a malformed line {seen:,}: {line[:80]!r}", flush=True)
+                    continue
+                slim = slim_record(obj)
+                if slim is not None:
+                    kept += 1
+                    out.write(json.dumps(slim["release"], ensure_ascii=False) + "\n")
+                    artists.update(slim["artists"])  # later credits win, as in 2025
+                if seen % 250_000 == 0:
+                    print(f"{seen:,} read, {kept:,} kept, {seen / (time.monotonic() - start):,.0f} lines/s", flush=True)
+    except BaseException:
+        tar.kill()
+        tmp.unlink(missing_ok=True)
+        raise
     if tar.wait() != 0:
         raise SystemExit(f"tar exited with {tar.returncode}; {releases_out} not written")
     os.replace(tmp, releases_out)
     artists_tmp = artists_out.with_name(artists_out.name + ".tmp")
     artists_tmp.write_text(json.dumps(artists, ensure_ascii=False))
     os.replace(artists_tmp, artists_out)
-    print(f"{seen:,} releases read, {kept:,} with cover art, {len(artists):,} artists")
+    print(f"{seen:,} releases read, {kept:,} with cover art, {len(artists):,} artists, {bad:,} malformed lines")
     return kept
 
 

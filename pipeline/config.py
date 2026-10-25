@@ -50,6 +50,8 @@ def require_image_root() -> Path:
 
 
 def image_path(uuid: str) -> Path:
+    """Where the 2025 download put a release's cover. Later covers have other names and some 2025
+    ones were dropped: use Catalog.covers() for a release's current covers."""
     return IMAGE_ROOT / uuid[:2] / f"{uuid}.jpg"
 
 

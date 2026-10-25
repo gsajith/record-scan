@@ -35,6 +35,13 @@ took 41 s:
 | releases to look up, new or with no cover left | 855,568 |
 | **backlog** | **870,417** |
 
+After the PR review, the fetcher reads its starting covers from a fixed snapshot,
+`covers-2025-08-13.jsonl` (`python -m pipeline.legacy.seed_covers_2025`), instead of the live
+catalog. The seed holds 3,128,310 covers. It leaves out 453 of the 688 failed 2025 downloads,
+the ones whose file really is missing, so they get looked up again. The dry run then reported
+3,110,638 kept, 17,672 dropped, 14,846 new fronts and 855,694 lookups, with 861,251 left to fetch
+after about 9,000 had landed.
+
 ## Live runs
 
 | Run | Items | Fetched | Failed | Rate |
@@ -44,8 +51,8 @@ took 41 s:
 | full run, `--workers 48`, first 3,000 | 3,000 | 2,989 | 11 | 6.6/s |
 
 The short runs understate the rate. Each one ends waiting on its slowest item, a release whose
-retries take about three minutes. The full run keeps every worker fed and holds 6.6 items/s, so
-it should take about 36 h. One request at a time, a lookup and its image take about 2.2 s. At
+retries take about three minutes. The full run keeps every worker fed and holds 6.5 to 6.6 items/s,
+so it should take about 36 h. It was restarted on the reviewed code after about 9,000 items. One request at a time, a lookup and its image take about 2.2 s. At
 32 parallel lookups, coverartarchive.org answered 12.9 requests/s with no 429 or 503. Most
 failures are fresh uploads that have no 500 px thumbnail yet (404). A rerun retries every
 failure.

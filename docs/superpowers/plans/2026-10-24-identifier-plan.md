@@ -291,10 +291,11 @@ def slim_dump(dump: Path, releases_out: Path, artists_out: Path) -> int   # stre
 class Cover: mbid: str; cover_id: str; file: str; primary: bool   # file relative to IMAGE_ROOT
 Catalog.covers(mbid) -> list[Cover]                                 # primary first
 # fetch_new_covers.py   CLI: python -m pipeline.metadata.fetch_new_covers --date D --since PREV [--limit N] [--workers 16] [--dry-run]
-def plan_covers(previous, releases, cover_release, new_fronts) -> Plan   # keep / download / lookup / dropped, no network
+def plan_covers(previous, releases, cover_release, new_fronts, fronts) -> Plan   # keep / download / lookup / dropped, no network; a new front replaces a non-front primary
 def best_front(caa_json: dict) -> str | None                             # 2025 priority: approved front, pending front, any approved; needs a 500 px thumbnail
 def get_with_backoff(session, url, sleep, tries=7) -> Response | None    # None on 404; 5 s doubling to 60 s on 429, 5xx, dropped connections
-def run(date, since, session, limit, dry_run, workers, sleep) -> Counts  # writes images to the drive, META_DIR/fetched-<date>.jsonl (resume log), covers-<date>.jsonl
+def run(date, since, session, limit, dry_run, workers, sleep) -> Counts  # reads META_DIR/covers-<since>.jsonl (a fixed snapshot); writes images to the drive, fetched-<date>.jsonl (resume log), covers-<date>.jsonl
+# legacy/seed_covers_2025.py   one-off: covers-2025-08-13.jsonl from the 2025 slim, leaving out the 453 failed downloads missing from the drive
 ```
 Commands, run from the repo root with the drive mounted:
 ```
@@ -302,6 +303,7 @@ D=~/Projects/record-scan-data/musicbrainz-dump-2026-10-24
 curl -C - -o $D/release.tar.xz https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/20261024-001001/release.tar.xz
 curl -o $D/mbdump-cover-art-archive.tar.bz2 https://data.metabrainz.org/pub/musicbrainz/data/fullexport/20261024-102842/mbdump-cover-art-archive.tar.bz2
 tar -xjf $D/mbdump-cover-art-archive.tar.bz2 -C $D mbdump
+python -m pipeline.legacy.seed_covers_2025                                        # first update only
 python -m pipeline.metadata.slim_file $D/release.tar.xz --date 2026-10-24        # about 40 min
 python -m pipeline.metadata.fetch_new_covers --date 2026-10-24 --since 2025-08-13 --dry-run
 python -m pipeline.metadata.fetch_new_covers --date 2026-10-24 --since 2025-08-13 --limit 500
@@ -309,9 +311,9 @@ python -m pipeline.metadata.build_catalog_db
 nohup caffeinate -i python -m pipeline.metadata.fetch_new_covers --date 2026-10-24 --since 2025-08-13 > $D/fetch.log 2>&1 &
 python -m pipeline.metadata.build_catalog_db                                      # again when the full run ends
 ```
-The next update passes the new dump's date as `--date` and this one's as `--since`.
+The next update passes the new dump's date as `--date` and this one's as `--since`, and so starts from this update's `covers-<date>.jsonl`. Rebuilding the catalog mid-run is safe: the fetcher never reads it.
 
-- [x] Step 1: Failing tests on generated fixtures: `slim_record` keeps the release group; `best_front` priority; `plan_covers` keeps old covers still upstream, adds new fronts, drops deleted ones, promotes an extra when the primary is gone, and looks up new releases; `get` backs off on 503, 429 and dropped connections; `run` resumes after a `--limit` run and after a crash mid-write without repeating a request, never overwrites or deletes a 2025 file, and `--dry-run` makes no requests; the catalog build takes release groups and covers.
+- [x] Step 1: Failing tests on generated fixtures: `slim_record` keeps the release group; `best_front` priority; `plan_covers` keeps old covers still upstream, adds new fronts, drops deleted ones, promotes an extra when the primary is gone, and looks up new releases; `get` backs off on 503, 429 and dropped connections; `run` resumes after a `--limit` run and after a crash mid-write without repeating a request, never overwrites or deletes a 2025 file, stops when the drive goes away, and `--dry-run` makes no requests; `covers_after` keeps one primary per release; `slim_dump` skips a malformed line; the catalog build takes release groups and covers.
 - [x] Step 2: Run, FAIL. Step 3: Implement. Step 4: tests pass.
 - [x] Step 5: Live: `--dry-run` backlog in `docs/results/2026-10-25-catalog-update.md`; `--limit 500` end to end; catalog rebuilt with `release_group` filled; full run started under `nohup`.
 - [x] Step 6: Commit `feat(pipeline): update covers and metadata from a fresh musicbrainz dump`.
@@ -387,7 +389,7 @@ Nothing here is deleted by an agent. Each row names the task whose completion ma
 | `_archive-album-annotator-2025-11/` | about 28 MB after cleanup | Task 3 (labeler merged) | the GitHub repo gsajith/album-annotator is archived and holds the same history |
 | `_archive-mbdump-2025-11/` | about 1.1 GB after cleanup, almost all `.git` | Task 6 (catalog update merged) | the scripts are in `pipeline/legacy/`; only the August 2025 commit history remains here |
 | `musicbrainz-dump-2025-08-13/` | 17 GB | Task 6 (catalog rebuilt from the 2026-10-24 slim) | superseded by the 2026-10-24 dump |
-| `metadata/slim_releases.json`, `slim_releases_with_covers.json`, `release_slim_artists.json`, `existing_files.json`, `failed_cover_fetches.json`, `failed_cover_id_fetches.json` | 1.6 GB | Task 6 (full run finished and catalog rebuilt) | the 2025 slim and fetch state; the catalog's `covers` table carries every 2025 cover id forward |
+| `metadata/slim_releases.json`, `slim_releases_with_covers.json`, `release_slim_artists.json`, `existing_files.json`, `failed_cover_fetches.json`, `failed_cover_id_fetches.json` | 1.6 GB | Task 6 (full run finished and catalog rebuilt) | the 2025 slim and fetch state; `covers-2025-08-13.jsonl` carries every 2025 cover forward and already leaves out the failed downloads |
 | `musicbrainz-dump-2026-10-24/release.tar.xz` | 22 GB | Task 6 (full run finished) | `releases-2026-10-24.jsonl` holds everything kept from it; download the next dump for the next update |
 | `~/.cache/clip` (1.2 GB), `~/.cache/torch/hub/checkpoints` (1.2 GB), HF `models--openai--clip-vit-base-patch32` (1.1 GB) | 3.5 GB | now | the OpenAI `clip` package, DINOv2 hub weights and transformers CLIP are not used by the new retrieval core |
 | HF `models--timm--vit_base_patch32_clip_224.openai` | 577 MB | keep | open_clip loads the `clip-vit-b-32` baseline from this cache |

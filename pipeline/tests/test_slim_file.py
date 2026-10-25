@@ -1,4 +1,8 @@
-from pipeline.metadata.slim_file import slim_record
+import io
+import json
+import tarfile
+
+from pipeline.metadata.slim_file import slim_dump, slim_record
 
 FLOYD = "83d91898-7763-47d7-b03b-b92132375c47"
 
@@ -47,3 +51,22 @@ def test_slim_record_skips_releases_without_art():
 def test_slim_record_keeps_art_without_a_front_flag():
     # 2025 kept these too: an image may be the front without being typed "Front" yet
     assert slim_record(dump_line(**{"cover-art-archive": {"front": False, "artwork": True}})) is not None
+
+
+def test_slim_record_keeps_an_empty_artist_name():
+    line = dump_line(**{"artist-credit": [{"artist": {"id": FLOYD, "name": ""}}]})
+    assert slim_record(line)["artists"] == {FLOYD: {"name": ""}}
+
+
+def test_slim_dump_skips_a_malformed_line(tmp_path):
+    body = (json.dumps(dump_line()) + "\n{not json\n").encode()
+    dump = tmp_path / "release.tar.xz"
+    with tarfile.open(dump, "w:xz") as tar:
+        info = tarfile.TarInfo("mbdump/release")
+        info.size = len(body)
+        tar.addfile(info, io.BytesIO(body))
+    releases, artists = tmp_path / "releases.jsonl", tmp_path / "artists.json"
+    assert slim_dump(dump, releases, artists) == 1
+    assert [json.loads(line)["release_group"] for line in releases.read_text().splitlines()] == [
+        "90878b63-f639-3c8b-aefb-190bdf3d1790"]
+    assert FLOYD in json.loads(artists.read_text())

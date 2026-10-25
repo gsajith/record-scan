@@ -6,7 +6,9 @@ Run pipeline.metadata.slim_file on the dump's release.tar.xz first. Reads:
 - META_DIR/releases-<date>.jsonl: releases with cover art in the new dump
 - DATA_DIR/musicbrainz-dump-<date>/mbdump/cover_art_archive.{cover_art,cover_art_type}: every
   image on the Cover Art Archive, from the full export's mbdump-cover-art-archive.tar.bz2
-- the current catalog.sqlite: the covers we already have
+- META_DIR/covers-<since>.jsonl: the covers the previous update left (for the 2025 dump,
+  written once by pipeline.legacy.seed_covers_2025). A fixed snapshot, so rebuilding the
+  catalog mid-run never changes the plan.
 Keeps old covers that are still upstream, downloads fronts uploaded since --since for releases
 we already have, and asks coverartarchive.org for the best front of releases with no cover left
 (new releases, and ones whose cover was deleted). New images land on the drive beside the 2025
@@ -19,7 +21,6 @@ no usable cover; the drive itself is never listed, since 3M files take too long 
 import argparse
 import json
 import os
-import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -35,6 +36,9 @@ from pipeline.metadata.catalog import Cover
 
 USER_AGENT = "RecordScan/0.1 (gsajith@umich.edu)"
 RETRY_STATUS = {429, 500, 502, 503, 504}
+# Connections that fail before or while the body arrives; all worth a retry
+DROPPED = (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError,
+           requests.exceptions.ContentDecodingError)
 CAA = "https://coverartarchive.org/release"
 FRONT_TYPE = "1"  # cover_art_archive.art_type id for "Front"
 
@@ -57,12 +61,15 @@ def plan_covers(
     releases: Iterable[str],
     cover_release: dict[int, int],
     new_fronts: dict[int, list[int]],
+    fronts: set[int],
 ) -> Plan:
     """Decide what happens to each cover, without touching the network.
 
-    previous: the current catalog's covers by mbid. releases: mbids with cover art in the new dump.
+    previous: the previous update's covers by mbid. releases: mbids with cover art in the new dump.
     cover_release: CAA image id -> MusicBrainz internal release id, for images still upstream.
     new_fronts: internal release id -> front image ids uploaded since the previous dump.
+    fronts: which of the previous image ids are typed Front. The primary should be a front:
+    2025 fell back to any approved image when a release had no front, so a new front replaces it.
     The cover dump keys images by internal release id, so an old cover id still upstream is
     the only link from an mbid to its new fronts. Releases with none left get a CAA lookup.
     """
@@ -77,13 +84,17 @@ def plan_covers(
         if not alive:
             plan.lookup.append(mbid)
             continue
-        if not any(c.primary for c in alive):
-            alive[0] = replace(alive[0], primary=True)
-        plan.keep += alive
         known = {int(c.cover_id) for c in covers}
-        for front in new_fronts.get(cover_release[int(alive[0].cover_id)], []):
-            if front not in known:
-                plan.download.append(Cover(mbid, str(front), new_file(mbid, str(front)), primary=False))
+        downloads = [Cover(mbid, str(f), new_file(mbid, str(f)), primary=False)
+                     for f in new_fronts.get(cover_release[int(alive[0].cover_id)], []) if f not in known]
+        primary = next((c for c in alive if c.primary), None)
+        if primary is None or int(primary.cover_id) not in fronts:
+            best = next((c for c in alive if int(c.cover_id) in fronts), None)
+            best = best or (downloads[0] if downloads else None) or primary or alive[0]
+            alive = [replace(c, primary=c is best) for c in alive]
+            downloads = [replace(c, primary=c is best) for c in downloads]
+        plan.keep += alive
+        plan.download += downloads
     plan.lookup += [m for m in releases if m not in previous]
     plan.lookup.sort()  # a fixed order, so --limit always takes the same releases
     return plan
@@ -94,11 +105,11 @@ def get_with_backoff(session, url: str, sleep: Callable[[float], None] = time.sl
 
     Raises once tries run out; the caller logs the release and a rerun retries it.
     """
-    wait = 5.0
+    delay = 5.0
     for attempt in range(1, tries + 1):
         try:
             resp = session.get(url, timeout=30)
-        except (requests.ConnectionError, requests.Timeout):
+        except DROPPED:
             if attempt == tries:
                 raise
         else:
@@ -107,30 +118,28 @@ def get_with_backoff(session, url: str, sleep: Callable[[float], None] = time.sl
             if resp.status_code not in RETRY_STATUS or attempt == tries:
                 resp.raise_for_status()
                 return resp
-        sleep(wait)
-        wait = min(wait * 2, 60.0)
+        sleep(delay)
+        delay = min(delay * 2, 60.0)
     raise AssertionError("unreachable")
 
 
-def load_previous(catalog_db: Path) -> dict[str, list[Cover]]:
-    """The covers we have, by mbid. A catalog built before the covers table had one per release."""
-    db = sqlite3.connect(f"{catalog_db.resolve().as_uri()}?mode=ro", uri=True)
-    try:
-        if db.execute("SELECT 1 FROM sqlite_master WHERE name = 'covers'").fetchone():
-            rows = db.execute("SELECT mbid, cover_id, file, is_primary FROM covers ORDER BY mbid, rowid")
-        else:
-            rows = db.execute("SELECT mbid, cover_id FROM releases WHERE cover_id IS NOT NULL ORDER BY mbid")
-            rows = ((m, c, f"{m[:2]}/{m}.jpg", True) for m, c in rows)
-        previous: dict[str, list[Cover]] = {}
-        for m, c, f, p in rows:
-            previous.setdefault(m, []).append(Cover(m, c, f, bool(p)))
-        return previous
-    finally:
-        db.close()
+def load_covers(path: Path) -> dict[str, list[Cover]]:
+    """A covers-<date>.jsonl list, by mbid."""
+    if not path.exists():
+        raise SystemExit(f"{path} not found. For the 2025 dump, run: python -m pipeline.legacy.seed_covers_2025")
+    covers: dict[str, list[Cover]] = {}
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                c = Cover(**json.loads(line))
+                covers.setdefault(c.mbid, []).append(c)
+    return covers
 
 
-def load_cover_dump(mbdump: Path, previous_ids: set[int], since: str) -> tuple[dict[int, int], dict[int, list[int]]]:
-    """(image id -> internal release id for our images still upstream, release -> fronts since `since`)."""
+def load_cover_dump(
+    mbdump: Path, previous_ids: set[int], since: str
+) -> tuple[dict[int, int], dict[int, list[int]], set[int]]:
+    """Read the cover dump into plan_covers' cover_release, new_fronts and fronts."""
     cover_release: dict[int, int] = {}
     recent: dict[int, int] = {}
     with (mbdump / "cover_art_archive.cover_art").open(encoding="utf-8") as f:
@@ -143,14 +152,20 @@ def load_cover_dump(mbdump: Path, previous_ids: set[int], since: str) -> tuple[d
             elif cols[5] >= since and cols[7] != "application/pdf":
                 recent[image] = release
     new_fronts: dict[int, list[int]] = {}
+    fronts: set[int] = set()
     with (mbdump / "cover_art_archive.cover_art_type").open(encoding="utf-8") as f:
         for line in f:
-            image, art_type = line.rstrip("\n").split("\t")
-            if art_type == FRONT_TYPE and int(image) in recent:
-                new_fronts.setdefault(recent[int(image)], []).append(int(image))
-    for fronts in new_fronts.values():
-        fronts.sort()
-    return cover_release, new_fronts
+            image_id, art_type = line.rstrip("\n").split("\t")
+            if art_type != FRONT_TYPE:
+                continue
+            image = int(image_id)
+            if image in recent:
+                new_fronts.setdefault(recent[image], []).append(image)
+            elif image in cover_release:
+                fronts.add(image)
+    for ids in new_fronts.values():
+        ids.sort()
+    return cover_release, new_fronts, fronts
 
 
 def best_front(caa: dict) -> str | None:
@@ -205,6 +220,25 @@ class Counts:
     failed: int = 0
 
 
+def covers_after(plan: Plan, landed: dict[str, Cover], releases: set[str]) -> list[Cover]:
+    """The full cover list once this update's landed images are in, one primary per release.
+
+    Images an earlier version of the plan fetched (fronts uploaded since the last dump, so
+    still valid) stay in as extras.
+    """
+    to_look_up = set(plan.lookup)
+    covers = plan.keep + [c for c in plan.download if c.file in landed]
+    covers += [c for c in landed.values() if c.primary and c.mbid in to_look_up]
+    files = {c.file for c in covers}
+    covers += [replace(c, primary=False) for c in landed.values() if c.mbid in releases and c.file not in files]
+    has_primary = {c.mbid for c in covers if c.primary}
+    for i, c in enumerate(covers):  # a planned primary that failed to download leaves its release without one
+        if c.mbid not in has_primary:
+            covers[i] = replace(c, primary=True)
+            has_primary.add(c.mbid)
+    return covers
+
+
 def run(
     date: str,
     since: str,
@@ -215,14 +249,14 @@ def run(
     sleep: Callable[[float], None] = time.sleep,
 ) -> Counts:
     image_root = config.require_image_root()
-    previous = load_previous(config.CATALOG_DB)
+    previous = load_covers(config.META_DIR / f"covers-{since}.jsonl")
     with (config.META_DIR / f"releases-{date}.jsonl").open(encoding="utf-8") as f:
         releases = {json.loads(line)["id"] for line in f if line.strip()}
     previous_ids = {int(c.cover_id) for covers in previous.values() for c in covers}
-    cover_release, new_fronts = load_cover_dump(
+    cover_release, new_fronts, fronts = load_cover_dump(
         config.DATA_DIR / f"musicbrainz-dump-{date}" / "mbdump", previous_ids, since
     )
-    plan = plan_covers(previous, releases, cover_release, new_fronts)
+    plan = plan_covers(previous, releases, cover_release, new_fronts, fronts)
 
     log_path = config.META_DIR / f"fetched-{date}.jsonl"
     landed: dict[str, Cover] = {}  # file -> cover, for images this update put on the drive
@@ -317,9 +351,7 @@ def run(
     finally:
         log.close()
 
-    to_look_up = set(plan.lookup)
-    covers = plan.keep + [c for c in plan.download if c.file in landed]
-    covers += [c for c in landed.values() if c.primary and c.mbid in to_look_up]
+    covers = covers_after(plan, landed, releases)
     out = config.META_DIR / f"covers-{date}.jsonl"
     tmp = out.with_name(out.name + ".tmp")
     tmp.write_text("".join(json.dumps(asdict(c)) + "\n" for c in covers))
