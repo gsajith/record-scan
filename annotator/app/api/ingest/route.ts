@@ -1,6 +1,6 @@
 import { parseSet, setDir } from "@/lib/data";
 import { LICENSES, splitFor } from "@/lib/labels";
-import { ingestImage } from "@/lib/store";
+import { ingestImage, NotAnImageError } from "@/lib/store";
 
 // POST /api/ingest, multipart { set, file, source_url?, license? } -> { sha1, split, file }
 export async function POST(request: Request) {
@@ -19,7 +19,11 @@ export async function POST(request: Request) {
   try {
     const saved = await ingestImage(setDir(set), Buffer.from(await file.arrayBuffer()));
     return Response.json({ ...saved, split: splitFor(set, saved.sha1) });
-  } catch {
-    return Response.json({ error: "That file is not an image the labeler can read." }, { status: 400 });
+  } catch (e) {
+    if (e instanceof NotAnImageError) {
+      return Response.json({ error: "That file is not an image the labeler can read." }, { status: 400 });
+    }
+    // Disk trouble, such as RS_DATA_DIR on an unmounted drive or a full disk
+    return Response.json({ error: `Couldn't save the photo: ${(e as Error).message}` }, { status: 500 });
   }
 }

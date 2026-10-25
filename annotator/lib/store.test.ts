@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import type { Label } from "./labels";
-import { appendLabel, ingestImage } from "./store";
+import { appendLabel, ingestImage, NotAnImageError } from "./store";
 
 function tempSetDir(set: "gold" | "wild"): string {
   return join(mkdtempSync(join(tmpdir(), "labeler-")), set);
@@ -43,7 +43,13 @@ describe("ingestImage", () => {
     expect(await sharp(readFileSync(join(setDir, file))).metadata()).toMatchObject({ format: "jpeg", width: 1600 });
   });
 
-  it("gives the same record when the same photo is pasted twice", async () => {
+  it("refuses a file that is not an image and saves nothing", async () => {
+    const setDir = tempSetDir("gold");
+    await expect(ingestImage(setDir, Buffer.from("not a photo"))).rejects.toBeInstanceOf(NotAnImageError);
+    expect(existsSync(join(setDir, "photos"))).toBe(false);
+  });
+
+  it("gives the same record when the same file is added twice", async () => {
     const setDir = tempSetDir("gold");
     const png = await bigPng();
     const first = await ingestImage(setDir, png);
