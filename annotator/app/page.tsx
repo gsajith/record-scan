@@ -1,241 +1,264 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
-import imageCompression from "browser-image-compression";
+import { useCallback, useEffect, useState } from "react";
+import type { Release } from "@/lib/catalog";
+import { KINDS, TAGS, type Kind, type Tag } from "@/lib/labels";
+import styles from "./page.module.css";
 
-export default function AnnotatePage() {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [box, setBox] = useState<{
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  } | null>(null);
-  const [drawing, setDrawing] = useState(false);
-  const imgRef = useRef<HTMLImageElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+type Photo = { sha1: string; file: string };
+type Result = Release & { thumb: string };
 
+// Gold only for now; the wild set, with its source and license fields, comes next
+const SET = "gold";
+
+// Browsers often give HEIC files no type, so the extension counts too
+const IMAGE_EXT = /\.(heic|heif)$/i;
+
+function firstImage(files: FileList | undefined): File | undefined {
+  return Array.from(files ?? []).find((f) => f.type.startsWith("image/") || IMAGE_EXT.test(f.name));
+}
+
+function errorText(body: unknown, fallback: string): string {
+  return typeof body === "object" && body !== null && "error" in body ? String(body.error) : fallback;
+}
+
+export default function LabelerPage() {
+  const [photo, setPhoto] = useState<Photo | null>(null);
+  const [busy, setBusy] = useState<"ingest" | "save" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Result[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Result | null>(null);
+  const [kind, setKind] = useState<Kind>("positive");
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [notes, setNotes] = useState("");
+
+  // Clear the choices for the next photo
+  const resetForm = useCallback(() => {
+    setQuery("");
+    setResults([]);
+    setPicked(null);
+    setKind("positive");
+    setTags([]);
+    setNotes("");
+  }, []);
+
+  const ingest = useCallback(async (file: File) => {
+    setBusy("ingest");
+    setError(null);
+    setStatus(null);
+    const form = new FormData();
+    form.append("set", SET);
+    form.append("file", file);
+    try {
+      const res = await fetch("/api/ingest", { method: "POST", body: form });
+      const body = await res.json();
+      if (!res.ok) throw new Error(errorText(body, "Couldn't save that photo."));
+      setPhoto({ sha1: body.sha1, file: body.file });
+      resetForm();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, [resetForm]);
+
+  // Paste an image from anywhere on the page
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    const img = imgRef.current;
-    if (!canvas || !ctx || !img) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    if (box) {
-      ctx.strokeStyle = "#ff3333";
-      ctx.lineWidth = 3;
-      ctx.setLineDash([8, 4]);
-      ctx.strokeRect(box.x, box.y, box.w, box.h);
-      ctx.setLineDash([]);
+    function onPaste(e: ClipboardEvent) {
+      const file = firstImage(e.clipboardData?.files);
+      if (file) {
+        e.preventDefault();
+        ingest(file);
+      }
     }
-  }, [box, imageUrl]);
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [ingest]);
 
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-
-    const compressed = await imageCompression(f, {
-      maxWidthOrHeight: 1024, // scale down
-      maxSizeMB: 0.5, // ~500 KB target
-      useWebWorker: true,
-    });
-
-    const formData = new FormData();
-    formData.append("file", compressed);
-
-    const res = await fetch("/api/upload", { method: "POST", body: formData });
-    const data = await res.json();
-    setImageUrl(data.url);
-  }
-
-  function handleMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setBox({ x: e.clientX - rect.left, y: e.clientY - rect.top, w: 0, h: 0 });
-    setDrawing(true);
-  }
-  function handleMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
-    if (!drawing || !box) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x2 = e.clientX - rect.left;
-    const y2 = e.clientY - rect.top;
-    setBox({ ...box, w: x2 - box.x, h: y2 - box.y });
-  }
-  function handleMouseUp() {
-    setDrawing(false);
-  }
-
-  function getTouchPos(e: React.TouchEvent<HTMLCanvasElement>) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const touch = e.touches[0];
-    return {
-      x: touch.clientX - rect.left,
-      y: touch.clientY - rect.top,
+  // Search as you type, a beat after the last key
+  useEffect(() => {
+    if (!query.trim()) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, { signal: controller.signal });
+        const body = await res.json();
+        if (!res.ok) throw new Error(errorText(body, "Search failed."));
+        setResults(body.results);
+        setSearchError(null);
+      } catch (e) {
+        if (!controller.signal.aborted) setSearchError((e as Error).message);
+      }
+    }, 200);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
     };
-  }
+  }, [query]);
 
-  function handleTouch(
-    e: React.TouchEvent<HTMLCanvasElement>,
-    phase: "start" | "move"
-  ) {
-    e.preventDefault(); // prevents scroll on drag
-    const { x, y } = getTouchPos(e);
-
-    if (phase === "start") {
-      setBox({ x, y, w: 0, h: 0 });
-      setDrawing(true);
-    } else if (phase === "move" && drawing && box) {
-      setBox({ ...box, w: x - box.x, h: y - box.y });
+  async function save() {
+    if (!photo) return;
+    setBusy("save");
+    setError(null);
+    const label = {
+      file: photo.file,
+      sha1: photo.sha1,
+      kind,
+      mbid: kind === "positive" ? picked?.mbid ?? null : null,
+      tags,
+      source_url: null,
+      license: "own",
+      notes,
+    };
+    try {
+      const res = await fetch("/api/label", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ set: SET, label }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(errorText(body, "Couldn't save the label."));
+      setStatus(kind === "positive" && picked ? `Saved as ${picked.title}. Paste the next photo.` : `Saved as ${kind}. Paste the next photo.`);
+      setPhoto(null);
+      resetForm();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
     }
   }
 
-  function handleTouchEnd() {
-    setDrawing(false);
-  }
-
-  async function handleSave() {
-    if (!imageUrl || !imgRef.current) return;
-    const img = imgRef.current;
-
-    let payload;
-
-    if (box) {
-      const xc = (box.x + box.w / 2) / img.width;
-      const yc = (box.y + box.h / 2) / img.height;
-      const w = Math.abs(box.w) / img.width;
-      const h = Math.abs(box.h) / img.height;
-      payload = {
-        x_center: xc,
-        y_center: yc,
-        width: w,
-        height: h,
-        class_id: 0,
-      };
-    } else {
-      // no box drawn
-      payload = {
-        x_center: null,
-        y_center: null,
-        width: null,
-        height: null,
-        class_id: -1,
-      };
-    }
-
-    await fetch("/api/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image_url: imageUrl, ...payload }),
-    });
-
-    alert(box ? "Annotation saved!" : "Negative sample saved!");
-    setBox(null);
-    setImageUrl(null);
-  }
+  const canSave = photo !== null && busy === null && (kind !== "positive" || picked !== null);
 
   return (
-    <div
-      style={{
-        padding: "16px",
-        fontFamily: "system-ui, sans-serif",
-        backgroundColor: "#fafafa",
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-      }}>
-      <h2 style={{ marginBottom: "1rem", color: "#222" }}>
-        Annotate Album Cover
-      </h2>
+    <main
+      className={styles.main}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        const file = firstImage(e.dataTransfer.files);
+        if (file) ingest(file);
+      }}
+    >
+      <section className={styles.photo} aria-label="Photo">
+        {photo ? (
+          // eslint-disable-next-line @next/next/no-img-element -- a local file served by /api/image, no optimizer needed
+          <img src={`/api/image/${SET}/${photo.sha1}`} alt="Photo being labeled" />
+        ) : (
+          <div className={styles.empty}>
+            <p>{busy === "ingest" ? "Saving photo…" : status ?? "Paste a photo, or drop one here."}</p>
+            <label className={styles.button}>
+              Choose a file
+              <input
+                type="file"
+                accept="image/*,.heic,.heif"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) ingest(file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+        )}
+      </section>
 
-      {!imageUrl && (
-        <label
-          style={{
-            display: "inline-block",
-            background: "#0070f3",
-            color: "white",
-            padding: "14px 22px",
-            borderRadius: "8px",
-            fontSize: "1.1rem",
-            fontWeight: 500,
-            cursor: "pointer",
-            marginTop: "2rem",
-            userSelect: "none",
-          }}>
-          📷 Take or Upload Photo
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handleUpload}
-            style={{ display: "none" }}
-          />
+      <section className={styles.panel} aria-label="Label">
+        <h1 className={styles.heading}>Gold set</h1>
+
+        <fieldset className={styles.kinds} disabled={!photo}>
+          <legend>Kind</legend>
+          {KINDS.map((k) => (
+            <label key={k} className={k === kind ? styles.kindOn : styles.kind}>
+              <input type="radio" name="kind" value={k} checked={k === kind} onChange={() => setKind(k)} />
+              {k}
+            </label>
+          ))}
+        </fieldset>
+
+        {kind === "positive" && (
+          <div className={styles.search}>
+            <input
+              type="search"
+              placeholder="Search title or artist"
+              aria-label="Search the catalog"
+              value={query}
+              disabled={!photo}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                if (!e.target.value.trim()) setResults([]);
+              }}
+            />
+            {picked && (
+              <p className={styles.picked}>
+                {picked.title} · {picked.artists.join(", ") || "Unknown artist"}
+              </p>
+            )}
+            {searchError && <p className={styles.error}>{searchError}</p>}
+            {query.trim() && !searchError && results.length === 0 && <p className={styles.hint}>No releases match.</p>}
+            <ul className={styles.results}>
+              {results.map((r) => (
+                <li key={r.mbid}>
+                  <button
+                    type="button"
+                    className={r.mbid === picked?.mbid ? styles.resultOn : styles.result}
+                    aria-pressed={r.mbid === picked?.mbid}
+                    onClick={() => setPicked(r)}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element -- Cover Art Archive thumbnail, hot-linked for display only */}
+                    <img
+                      src={r.thumb}
+                      alt=""
+                      width={56}
+                      height={56}
+                      loading="lazy"
+                      // Some covers have no thumbnail; show the empty tile instead of a broken image
+                      onError={(e) => e.currentTarget.removeAttribute("src")}
+                    />
+                    <span>
+                      <strong>{r.title}</strong>
+                      <span>{r.artists.join(", ") || "Unknown artist"}</span>
+                      {r.format && <span className={styles.hint}>{r.format}</span>}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <fieldset className={styles.tags} disabled={!photo}>
+          <legend>Tags</legend>
+          {TAGS.map((t) => (
+            <label key={t}>
+              <input
+                type="checkbox"
+                checked={tags.includes(t)}
+                onChange={(e) => setTags(e.target.checked ? [...tags, t] : tags.filter((x) => x !== t))}
+              />
+              {t}
+            </label>
+          ))}
+        </fieldset>
+
+        <label className={styles.notes}>
+          Notes
+          <textarea value={notes} rows={2} disabled={!photo} onChange={(e) => setNotes(e.target.value)} />
         </label>
-      )}
 
-      {imageUrl && (
-        <div
-          style={{
-            position: "relative",
-            display: "inline-block",
-            marginTop: "1rem",
-          }}>
-          <img
-            ref={imgRef}
-            src={imageUrl}
-            alt="album"
-            style={{
-              maxWidth: "90vw",
-              maxHeight: "70vh",
-              borderRadius: "12px",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
-              display: "block",
-            }}
-            onLoad={(e) => {
-              const img = e.currentTarget;
-              const canvas = canvasRef.current;
-              if (canvas) {
-                canvas.width = img.width;
-                canvas.height = img.height;
-              }
-            }}
-          />
-          <canvas
-            ref={canvasRef}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              cursor: "crosshair",
-              touchAction: "none",
-            }}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onTouchStart={(e) => handleTouch(e, "start")}
-            onTouchMove={(e) => handleTouch(e, "move")}
-            onTouchEnd={() => handleTouchEnd()}
-          />
-        </div>
-      )}
-
-      {imageUrl && (
-        <button
-          onClick={handleSave}
-          style={{
-            marginTop: "1.5rem",
-            background: "#00b37e",
-            color: "white",
-            fontSize: "1.1rem",
-            border: "none",
-            borderRadius: "10px",
-            padding: "14px 32px",
-            boxShadow: "0 3px 6px rgba(0,0,0,0.15)",
-            cursor: "pointer",
-            touchAction: "manipulation",
-          }}>
-          ✅ Save Annotation
+        {error && (
+          <p className={styles.error} role="alert">
+            {error}
+          </p>
+        )}
+        <button type="button" className={styles.save} disabled={!canSave} onClick={save}>
+          {busy === "save" ? "Saving…" : "Save"}
         </button>
-      )}
-    </div>
+      </section>
+    </main>
   );
 }

@@ -6,7 +6,7 @@
 
 **Architecture:** Phase A builds the measuring instruments (labeler, gold and wild sets, catalog search, retrieval core, gallery pass, catalog update job, export spike) and runs the frozen-backbone sweep. Nothing in Phase A trains a model. Phases B to D (hybrid v1, simulator, head, fine-tune, distillation, index compression, lock calibration) are gated on Phase A's numbers and are outlined here; their tasks get written at full detail after Step 4's measurements exist, because the model and the dimensions they depend on are unknown until then.
 
-**Tech stack:** Python 3.12, PyTorch 2.8 (MPS), Hugging Face transformers and timm for backbones, open_clip for the CLIP baseline, hnswlib and faiss-cpu, WebDataset shards, SQLite FTS5, imagehash, ffmpeg. Next.js 16 (the `annotator/` app, repurposed as the labeler) with better-sqlite3 and zod. coremltools 9 and ExecuTorch 1.x for the export spike.
+**Tech stack:** Python 3.12, PyTorch 2.8 (MPS), Hugging Face transformers and timm for backbones, open_clip for the CLIP baseline, hnswlib and faiss-cpu, WebDataset shards, SQLite FTS5, imagehash, ffmpeg. Next.js 16 (the `annotator/` app, repurposed as the labeler) with zod and Node 24's built-in `node:sqlite` (chosen over better-sqlite3 in Task 3: no native build, and npm 11 would need its install script approved). coremltools 9 and ExecuTorch 1.x for the export spike.
 
 **Spec:** `docs/research/reports/On device album cover retrieval 2026.md` (the twelve gated steps and the evidence behind them) plus the research notes beside it. Decisions D8 to D13 below extend the recovery plan's D1 to D7. Where this plan and the report differ, this plan wins; it records why.
 
@@ -177,8 +177,8 @@ JSONL record keys are exactly the `Label` field names. `labeled_at` is ISO 8601 
 
 **Files:**
 - Delete: `annotator/lib/supabaseClient.ts`, `annotator/app/api/upload/route.ts`, `annotator/app/api/save/route.ts`
-- Create: `annotator/lib/labels.ts`, `annotator/lib/data.ts` (paths under `RS_DATA_DIR`), `annotator/lib/catalog.ts` (better-sqlite3 read-only connection), `annotator/app/api/search/route.ts`, `annotator/app/api/ingest/route.ts`, `annotator/app/api/label/route.ts`, `annotator/app/api/queue/route.ts`, `annotator/app/api/image/[set]/[sha1]/route.ts`, `annotator/lib/labels.test.ts`
-- Modify: `annotator/app/page.tsx` (new UI), `annotator/package.json` (add `better-sqlite3`, `zod`, `vitest`; remove `@supabase/supabase-js`), `annotator/README.md`, `.env.example` (add `RS_DATA_DIR`)
+- Create: `annotator/lib/labels.ts`, `annotator/lib/data.ts` (paths under `RS_DATA_DIR`), `annotator/lib/catalog.ts` (`node:sqlite` read-only connection), `annotator/app/api/search/route.ts`, `annotator/app/api/ingest/route.ts`, `annotator/app/api/label/route.ts`, `annotator/app/api/queue/route.ts`, `annotator/app/api/image/[set]/[sha1]/route.ts`, `annotator/lib/labels.test.ts`
+- Modify: `annotator/app/page.tsx` (new UI), `annotator/package.json` (add `zod`, `sharp`, `vitest`; remove `@supabase/supabase-js`), `annotator/README.md`, `.env.example` (add `RS_DATA_DIR`)
 
 **Interfaces (produces):**
 ```ts

@@ -1,12 +1,26 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --muted: #666666;
+  --line: #e2e2e2;
+  --well: #f4f4f4;
+  --accent: #2557d6;
+  --accent-soft: #eaf0ff;
+  --on-accent: #ffffff;
+  --danger: #c0262d;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+    --muted: #9a9a9a;
+    --line: #2a2a2a;
+    --well: #151515;
+    --accent: #6f95ff;
+    --accent-soft: #16213d;
+    --on-accent: #0a0a0a;
+    --danger: #ff6b70;
   }
 }
 
