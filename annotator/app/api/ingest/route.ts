@@ -25,7 +25,9 @@ export async function POST(request: Request) {
     try {
       bytes = await download(url.data);
     } catch (e) {
-      return Response.json({ error: `Couldn't download that image: ${(e as Error).message}` }, { status: 400 });
+      // fetch reports network trouble as "fetch failed" and puts the reason in `cause`
+      const reason = ((e as Error).cause as Error | undefined)?.message ?? (e as Error).message;
+      return Response.json({ error: `Couldn't download that image: ${reason}` }, { status: 400 });
     }
   } else {
     const form = await request.formData();
@@ -38,11 +40,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const saved = set === "wild" ? await ingestWild(setDir(set), bytes, sourceUrl) : await ingestImage(setDir(set), bytes);
+    const saved =
+      set === "wild"
+        ? await ingestWild(setDir(set), bytes, sourceUrl)
+        : { ...(await ingestImage(setDir(set), bytes)), sourceUrl: null };
     return Response.json({ ...saved, split: splitFor(set, saved.sha1) });
   } catch (e) {
     if (e instanceof NotAnImageError) {
-      return Response.json({ error: "That file is not an image the labeler can read." }, { status: 400 });
+      return Response.json({ error: "That isn't an image the labeler can read." }, { status: 400 });
     }
     if (e instanceof NearDuplicateError) return Response.json({ error: e.message, match: e.match }, { status: 409 });
     // Disk trouble, such as RS_DATA_DIR on an unmounted drive or a full disk
@@ -50,7 +55,11 @@ export async function POST(request: Request) {
   }
 }
 
-/** Fetch an image the user pointed at, with a time and size limit. */
+/**
+ * Fetch an image the user pointed at, with a time and size limit. It will fetch local and LAN
+ * addresses too; that's acceptable because only the labeler's own page on this Mac can call the
+ * route (proxy.ts checks Host and Sec-Fetch-Site).
+ */
 async function download(url: string): Promise<Buffer> {
   const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
   if (!res.ok || !res.body) throw new Error(`the server answered ${res.status}`);

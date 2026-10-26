@@ -14,7 +14,6 @@ export const LICENSES = ["own", "cc0", "cc-by", "cc-by-sa", "pexels", "unsplash"
 export type SetName = (typeof SETS)[number];
 export type Kind = (typeof KINDS)[number];
 export type Tag = (typeof TAGS)[number];
-export type License = (typeof LICENSES)[number];
 export type Split = "eval" | "sim";
 
 export const SHA1_RE = /^[0-9a-f]{40}$/;

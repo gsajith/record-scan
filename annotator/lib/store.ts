@@ -81,17 +81,24 @@ export async function ingestWild(
   setDir: string,
   input: Buffer,
   sourceUrl: string | null,
-): Promise<{ sha1: string; file: string }> {
+): Promise<{ sha1: string; file: string; sourceUrl: string | null }> {
   const sha1 = createHash("sha1").update(input).digest("hex");
-  if (existsSync(join(setDir, photoFile(sha1)))) return { sha1, file: photoFile(sha1) };
+  const sources = readSources(setDir);
+  if (existsSync(join(setDir, photoFile(sha1)))) {
+    // The same file again: keep the address it came with, or record the first one given
+    const stored = sources.get(sha1)?.source_url;
+    if (!stored && sourceUrl) appendSource(setDir, { sha1, source_url: sourceUrl });
+    return { sha1, file: photoFile(sha1), sourceUrl: stored ?? sourceUrl };
+  }
   const jpeg = await decodeToJpeg(input);
   const phash = await fingerprint(jpeg);
-  for (const other of readSources(setDir).values()) {
+  for (const other of sources.values()) {
     if (other.phash && isNearDuplicate(phash, other.phash)) throw new NearDuplicateError(other.sha1);
   }
-  writePhoto(setDir, sha1, jpeg);
+  // Fingerprint first: a crash after it leaves a harmless line, never a photo the check can't see
   appendSource(setDir, { sha1, phash, ...(sourceUrl ? { source_url: sourceUrl } : {}) });
-  return { sha1, file: photoFile(sha1) };
+  writePhoto(setDir, sha1, jpeg);
+  return { sha1, file: photoFile(sha1), sourceUrl };
 }
 
 /**

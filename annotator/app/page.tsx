@@ -26,6 +26,9 @@ function errorText(body: unknown, fallback: string): string {
   return typeof body === "object" && body !== null && "error" in body ? String(body.error) : fallback;
 }
 
+// Gold is your own photos, so an image from the web belongs in wild
+const LINKS_ARE_WILD = "Image links go in the wild set. Switch to Wild to add this one.";
+
 type QueueResponse = { next: QueueItem | null; remaining: number; counts: Counts };
 
 async function fetchQueue(set: SetName, skip: string[]): Promise<QueueResponse> {
@@ -151,8 +154,7 @@ export default function LabelerPage() {
       const res = await fetch("/api/ingest", { method: "POST", ...request });
       const body = await res.json();
       if (!res.ok) throw new Error(errorText(body, "Couldn't save that photo."));
-      const source = typeof input === "string" ? input : sourceUrl;
-      setPhoto({ sha1: body.sha1, file: body.file, video: null, sourceUrl: set === "wild" ? source ?? null : null });
+      setPhoto({ sha1: body.sha1, file: body.file, video: null, sourceUrl: body.sourceUrl });
       clearPerPhoto();
       startNewRecord();
       lastVideo.current = null;
@@ -172,9 +174,10 @@ export default function LabelerPage() {
       if (file) {
         e.preventDefault();
         ingest(file);
-      } else if (set === "wild" && !isTyping(e.target) && /^https?:\/\/\S+$/.test(text)) {
+      } else if (!isTyping(e.target) && /^https?:\/\/\S+$/.test(text)) {
         e.preventDefault();
-        ingest(text);
+        if (set === "wild") ingest(text);
+        else setError(LINKS_ARE_WILD);
       }
     }
     window.addEventListener("paste", onPaste);
@@ -188,6 +191,7 @@ export default function LabelerPage() {
     setStatus(null);
     setError(null);
     lastVideo.current = null;
+    setPhoto(null);
     setSet(next); // the load effect fetches the new set's queue
   }
 
@@ -323,6 +327,7 @@ export default function LabelerPage() {
         const url = droppedUrl(e.dataTransfer);
         if (file) ingest(file, url);
         else if (url && set === "wild") ingest(url);
+        else if (url) setError(LINKS_ARE_WILD);
       }}
     >
       <section className={styles.photo} aria-label="Photo">

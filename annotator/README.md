@@ -33,9 +33,10 @@ the one after each save.
   into `gold/inbox/`, run `python -m pipeline.gold.sample_frames gold` to turn them into
   frames, then label the frames here. You can also paste, drop or choose a photo.
 - **Wild** is candid photos of records from the internet (decision D9). Paste or drop an
-  image, or paste or drag in an image link. When a drag out of a web page hands over the
-  image's address, the label records it. A pasted or dropped photo that looks like one already
-  added this way is refused, so one picture can't land in both the sim and eval halves.
+  image, or paste or drag in an image link. When a pasted link or a drag out of a web page
+  gives the image's address, the label records it. A pasted or dropped photo that looks like
+  one already added this way is refused, so one picture can't land in both the sim and eval
+  halves. Photos placed in `wild/inbox/` skip that check.
 
 The album and kind carry over between frames of the same video, so after the first frame you
 add tags and press Enter. They reset for a new video or a pasted photo.
