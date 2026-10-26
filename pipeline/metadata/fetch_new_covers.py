@@ -10,7 +10,7 @@ Run pipeline.metadata.slim_file on the dump's release.tar.xz first. Reads:
   written once by pipeline.legacy.seed_covers_2025). A fixed snapshot, so rebuilding the
   catalog mid-run never changes the plan.
 Keeps old covers that are still upstream, downloads fronts uploaded since --since for releases
-we already have, and asks coverartarchive.org for the best front of releases with no cover left
+we already have, and asks the Cover Art Archive for the best front of releases with no cover left
 (new releases, and ones whose cover was deleted). New images land on the drive beside the 2025
 covers as <mbid>-<cover_id>.jpg, and a file that already exists is never replaced. Writes the
 full list of covers to META_DIR/covers-<date>.jsonl for build_catalog_db. Rerunning resumes
@@ -39,7 +39,9 @@ RETRY_STATUS = {429, 500, 502, 503, 504}
 # Connections that fail before or while the body arrives; all worth a retry
 DROPPED = (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError,
            requests.exceptions.ContentDecodingError)
-CAA = "https://coverartarchive.org/release"
+# coverartarchive.org/release/<mbid> only redirects here; asking archive.org directly saves a hop
+IA = "https://archive.org/download"
+BROKEN_TRIES = 3  # a 500 usually means a broken item rather than a busy server
 FRONT_TYPE = "1"  # cover_art_archive.art_type id for "Front"
 
 
@@ -103,7 +105,8 @@ def plan_covers(
 def get_with_backoff(session, url: str, sleep: Callable[[float], None] = time.sleep, tries: int = 7) -> requests.Response | None:
     """GET url, or None on 404. Backs off 5 s, doubling to 60 s, on 429, 5xx and dropped connections.
 
-    Raises once tries run out; the caller logs the release and a rerun retries it.
+    A 500 gives up after BROKEN_TRIES. Raises once tries run out; the caller logs the release
+    and a rerun retries it.
     """
     delay = 5.0
     for attempt in range(1, tries + 1):
@@ -115,7 +118,9 @@ def get_with_backoff(session, url: str, sleep: Callable[[float], None] = time.sl
         else:
             if resp.status_code == 404:
                 return None
-            if resp.status_code not in RETRY_STATUS or attempt == tries:
+            if resp.status_code not in RETRY_STATUS or attempt == tries or (
+                resp.status_code == 500 and attempt == BROKEN_TRIES
+            ):
                 resp.raise_for_status()
                 return resp
         sleep(delay)
@@ -169,7 +174,8 @@ def load_cover_dump(
 
 
 def best_front(caa: dict) -> str | None:
-    """The image id to use as a release's cover, from coverartarchive.org/release/<mbid>.
+    """The image id to use as a release's cover, from the item's index.json (what
+    coverartarchive.org/release/<mbid> serves).
 
     Same priority as the 2025 fetch: approved front, then pending front, then any approved
     image. Only images with a 500 px thumbnail ("500", or "large" on older records) count.
@@ -195,7 +201,8 @@ def download(session, cover: Cover, image_root: Path, sleep: Callable[[float], N
         return
     if not path.parent.is_dir():  # the 256 prefix folders exist; never create folders on the drive
         raise FileNotFoundError(path.parent)
-    resp = get_with_backoff(session, f"{CAA}/{cover.mbid}/{cover.cover_id}-500.jpg", sleep)
+    item = f"mbid-{cover.mbid}"
+    resp = get_with_backoff(session, f"{IA}/{item}/{item}-{cover.cover_id}_thumb500.jpg", sleep)
     if resp is None:
         raise LookupError(f"no 500 px image for {cover.mbid}/{cover.cover_id}")
     if not resp.content.startswith(b"\xff\xd8"):
@@ -303,7 +310,7 @@ def run(
         if isinstance(item, Cover):
             cover = item
         else:
-            resp = get_with_backoff(session, f"{CAA}/{item}", sleep)
+            resp = get_with_backoff(session, f"{IA}/mbid-{item}/index.json", sleep)
             cover_id = best_front(resp.json()) if resp is not None else None
             if cover_id is None:
                 record({"mbid": item, "cover_id": None})
@@ -366,14 +373,14 @@ def main() -> None:
     parser.add_argument("--date", required=True, help="the new dump's date, YYYY-MM-DD")
     parser.add_argument("--since", required=True, help="the previous dump's date; fronts uploaded since count as new")
     parser.add_argument("--limit", type=int, help="fetch at most N items this run")
-    parser.add_argument("--workers", type=int, default=16)
+    parser.add_argument("--workers", type=int, default=48, help="more gives no speedup: archive.org tops out near 5 items/s")
     parser.add_argument("--dry-run", action="store_true", help="print the backlog and exit")
     args = parser.parse_args()
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     adapter = requests.adapters.HTTPAdapter(pool_maxsize=args.workers)
     session.mount("https://", adapter)
-    session.mount("http://", adapter)  # coverartarchive.org redirects to archive.org mirrors
+    session.mount("http://", adapter)  # archive.org redirects to its storage servers
     run(args.date, args.since, session, args.limit, args.dry_run, args.workers)
 
 

@@ -57,6 +57,14 @@ so it should take about 36 h. It was restarted on the reviewed code after about 
 failures are fresh uploads that have no 500 px thumbnail yet (404). A rerun retries every
 failure.
 
+### 2026-10-26: archive.org directly, 500s retried 3 times, 96 workers
+
+At 583,000 items the run was restarted with three changes: requests go straight to archive.org
+(one redirect fewer than coverartarchive.org), a 500 gives up after 3 tries instead of 7, and 96
+workers instead of 48. The first ~2,500 items were the run's earlier failures, which failed again.
+On fresh items, sampled every 2 minutes, the run landed 4.7 to 4.9 covers/s, the same as before.
+So archive.org caps us near 5 items/s whatever the concurrency; 48 workers is the default.
+
 ## Catalog
 
 After the first 2,000 or so covers, `python -m pipeline.metadata.build_catalog_db` took 144 s:

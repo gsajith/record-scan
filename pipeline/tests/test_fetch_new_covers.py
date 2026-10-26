@@ -106,6 +106,14 @@ def test_get_backs_off_on_503_and_dropped_connections():
     assert waits == [5, 10, 20, 40, 60]
 
 
+def test_get_gives_up_sooner_on_500():
+    # A 500 usually means a broken item, not a busy server: three tries, not seven
+    waits: list[float] = []
+    with pytest.raises(requests.HTTPError):
+        get_with_backoff(ScriptedSession({"u": [FakeResponse(500)] * 7}), "u", sleep=waits.append)
+    assert waits == [5, 10]
+
+
 def test_get_returns_none_on_404_and_gives_up_eventually():
     waits: list[float] = []
     assert get_with_backoff(ScriptedSession({"u": [FakeResponse(404)]}), "u", sleep=waits.append) is None
@@ -125,11 +133,11 @@ def write_lines(path, lines):
 
 
 def caa_json(m: int) -> str:
-    return f"https://coverartarchive.org/release/{mbid(m)}"
+    return f"https://archive.org/download/mbid-{mbid(m)}/index.json"
 
 
 def caa_image(m: int, cover_id: int) -> str:
-    return f"https://coverartarchive.org/release/{mbid(m)}/{cover_id}-500.jpg"
+    return f"https://archive.org/download/mbid-{mbid(m)}/mbid-{mbid(m)}-{cover_id}_thumb500.jpg"
 
 
 @pytest.fixture
