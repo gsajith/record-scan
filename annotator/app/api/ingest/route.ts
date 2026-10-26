@@ -1,33 +1,29 @@
 import { z } from "zod";
 import { parseSet, setDir } from "@/lib/data";
-import { LICENSES, splitFor, type License, type SetName } from "@/lib/labels";
+import { splitFor, type SetName } from "@/lib/labels";
 import { ingestImage, ingestWild, NearDuplicateError, NotAnImageError } from "@/lib/store";
 
 const MAX_DOWNLOAD = 30 * 1024 * 1024;
-const WILD_RULE = "A wild photo needs the web page it came from and a license that allows it.";
-
-const UrlSchema = z.object({
-  set: z.enum(["gold", "wild"]),
-  url: z.url({ protocol: /^https?$/ }),
-  source_url: z.string().optional(),
-  license: z.string().optional(),
-});
+const WebUrl = z.url({ protocol: /^https?$/ });
 
 // POST /api/ingest
-//   multipart { set, file, source_url?, license? }   a pasted, dropped or chosen file
-//   json      { set, url, source_url?, license? }    an image address pasted or dropped from a page
+//   multipart { set, file, source_url? }   a pasted, dropped or chosen file; source_url when a
+//                                          drag out of a web page gave one
+//   json      { set: "wild", url }         an image address pasted or dragged in; it is also the source
 // -> { sha1, split, file }
 export async function POST(request: Request) {
   let set: SetName | null;
   let bytes: Buffer;
-  let sourceUrl: unknown;
-  let license: unknown;
+  let sourceUrl: string | null;
   if (request.headers.get("content-type")?.includes("application/json")) {
-    const body = UrlSchema.safeParse(await request.json().catch(() => null));
-    if (!body.success) return Response.json({ error: "That address isn't an http or https link." }, { status: 400 });
-    ({ set, source_url: sourceUrl, license } = body.data);
+    const body = (await request.json().catch(() => null)) as { set?: unknown; url?: unknown } | null;
+    if (body?.set !== "wild") return Response.json({ error: "Image links go in the wild set." }, { status: 400 });
+    const url = WebUrl.safeParse(body.url);
+    if (!url.success) return Response.json({ error: "That address isn't an http or https link." }, { status: 400 });
+    set = "wild";
+    sourceUrl = url.data;
     try {
-      bytes = await download(body.data.url);
+      bytes = await download(url.data);
     } catch (e) {
       return Response.json({ error: `Couldn't download that image: ${(e as Error).message}` }, { status: 400 });
     }
@@ -38,21 +34,11 @@ export async function POST(request: Request) {
     if (!set) return Response.json({ error: "set must be gold or wild" }, { status: 400 });
     if (!(file instanceof File)) return Response.json({ error: "no image in the upload" }, { status: 400 });
     bytes = Buffer.from(await file.arrayBuffer());
-    sourceUrl = form.get("source_url");
-    license = form.get("license");
+    sourceUrl = WebUrl.safeParse(form.get("source_url")).data ?? null;
   }
 
   try {
-    let saved;
-    if (set === "wild") {
-      // D9: a wild photo is only kept with where it came from and a license that allows it
-      const url = z.url({ protocol: /^https?$/ }).safeParse(sourceUrl);
-      const allowed = LICENSES.find((l): l is License => l === license);
-      if (!url.success || !allowed) return Response.json({ error: WILD_RULE }, { status: 400 });
-      saved = await ingestWild(setDir(set), bytes, { url: url.data, license: allowed });
-    } else {
-      saved = await ingestImage(setDir(set), bytes);
-    }
+    const saved = set === "wild" ? await ingestWild(setDir(set), bytes, sourceUrl) : await ingestImage(setDir(set), bytes);
     return Response.json({ ...saved, split: splitFor(set, saved.sha1) });
   } catch (e) {
     if (e instanceof NotAnImageError) {
@@ -66,7 +52,7 @@ export async function POST(request: Request) {
 
 /** Fetch an image the user pointed at, with a time and size limit. */
 async function download(url: string): Promise<Buffer> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(20_000), redirect: "follow" });
+  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
   if (!res.ok || !res.body) throw new Error(`the server answered ${res.status}`);
   if (Number(res.headers.get("content-length")) > MAX_DOWNLOAD) throw new Error("it is over 30 MB");
   const reader = res.body.getReader();

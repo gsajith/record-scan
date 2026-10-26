@@ -357,28 +357,3 @@
   cursor: not-allowed;
 }
 
-.source {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 9.5rem;
-  gap: 8px;
-}
-
-.source label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
-.source input,
-.source select {
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--background);
-  color: var(--foreground);
-  font: inherit;
-  font-size: 1rem;
-}

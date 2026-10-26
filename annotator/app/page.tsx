@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Release } from "@/lib/catalog";
 import { hotkeyAction, KIND_KEYS, TAG_KEYS } from "@/lib/hotkeys";
-import { KINDS, LICENSES, SETS, TAGS, type Kind, type License, type SetName, type Split, type Tag } from "@/lib/labels";
+import { KINDS, SETS, TAGS, type Kind, type SetName, type Split, type Tag } from "@/lib/labels";
 import type { QueueItem } from "@/lib/queue";
 import styles from "./page.module.css";
 
@@ -66,11 +66,6 @@ export default function LabelerPage() {
   const [kind, setKind] = useState<Kind>("positive");
   const [tags, setTags] = useState<Tag[]>([]);
   const [notes, setNotes] = useState("");
-  // Wild photos only (D9): the page a photo came from and its license. Gold is always "own".
-  // The license carries over between photos (a batch is often from one site); the source
-  // carries over like the album, within one video.
-  const [sourceUrl, setSourceUrl] = useState("");
-  const [license, setLicense] = useState<License | "">("");
 
   const searchRef = useRef<HTMLInputElement>(null);
   const lastVideo = useRef<string | null>(null);
@@ -103,16 +98,8 @@ export default function LabelerPage() {
       clearPerPhoto();
       const video = body.next?.video ?? null;
       // Pasted photos and the first frame of each video are a new record
-      if (body.next && (video === null || video !== lastVideo.current)) {
-        startNewRecord();
-        setSourceUrl("");
-      }
+      if (body.next && (video === null || video !== lastVideo.current)) startNewRecord();
       lastVideo.current = video;
-      // A wild photo added earlier brings back the source and license it was added with
-      if (body.next?.source) {
-        setSourceUrl(body.next.source.url);
-        setLicense(body.next.source.license);
-      }
     },
     [clearPerPhoto, startNewRecord],
   );
@@ -138,18 +125,11 @@ export default function LabelerPage() {
     if (focusSearchTick > 0) searchRef.current?.focus();
   }, [focusSearchTick]);
 
-  /** Add a file, or (wild only) an image address. `pageUrl` prefills an empty source field. */
-  async function ingest(input: File | string, pageUrl?: string) {
-    let source: { url: string; license: License } | null = null;
-    if (set === "wild") {
-      const url = sourceUrl || pageUrl || "";
-      if (url !== sourceUrl) setSourceUrl(url);
-      if (!url || !license) {
-        setError(`Add ${url ? "" : "the page the photo came from and "}a license first, then add the photo again.`);
-        return;
-      }
-      source = { url, license };
-    }
+  /**
+   * Add a file, or (wild only) an image address. `sourceUrl` is the image's address when a drag
+   * out of a web page handed one over; wild labels record it.
+   */
+  async function ingest(input: File | string, sourceUrl?: string) {
     loadId.current += 1;
     setBusy("ingest");
     setError(null);
@@ -158,23 +138,21 @@ export default function LabelerPage() {
     if (typeof input === "string") {
       request = {
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ set, url: input, source_url: source?.url, license: source?.license }),
+        body: JSON.stringify({ set, url: input }),
       };
     } else {
       const form = new FormData();
       form.append("set", set);
       form.append("file", input);
-      if (source) {
-        form.append("source_url", source.url);
-        form.append("license", source.license);
-      }
+      if (set === "wild" && sourceUrl) form.append("source_url", sourceUrl);
       request = { body: form };
     }
     try {
       const res = await fetch("/api/ingest", { method: "POST", ...request });
       const body = await res.json();
       if (!res.ok) throw new Error(errorText(body, "Couldn't save that photo."));
-      setPhoto({ sha1: body.sha1, file: body.file, video: null, source });
+      const source = typeof input === "string" ? input : sourceUrl;
+      setPhoto({ sha1: body.sha1, file: body.file, video: null, sourceUrl: set === "wild" ? source ?? null : null });
       clearPerPhoto();
       startNewRecord();
       lastVideo.current = null;
@@ -186,7 +164,7 @@ export default function LabelerPage() {
   }
 
   // Paste an image from anywhere on the page, or (wild) an image address while not typing.
-  // Re-bound each render so it sees the current set, source and license.
+  // Re-bound each render so it sees the current set.
   useEffect(() => {
     function onPaste(e: ClipboardEvent) {
       const file = firstImage(e.clipboardData?.files);
@@ -196,7 +174,7 @@ export default function LabelerPage() {
         ingest(file);
       } else if (set === "wild" && !isTyping(e.target) && /^https?:\/\/\S+$/.test(text)) {
         e.preventDefault();
-        ingest(text, text);
+        ingest(text);
       }
     }
     window.addEventListener("paste", onPaste);
@@ -241,8 +219,7 @@ export default function LabelerPage() {
   }, [active]);
 
   const needsAlbum = kind === "positive" && picked === null;
-  const needsSource = set === "wild" && (!sourceUrl || !license);
-  const canSave = photo !== null && busy === null && !needsAlbum && !needsSource;
+  const canSave = photo !== null && busy === null && !needsAlbum;
 
   async function save() {
     if (!photo || !canSave) return;
@@ -255,8 +232,9 @@ export default function LabelerPage() {
       kind,
       mbid: kind === "positive" ? picked?.mbid ?? null : null,
       tags,
-      source_url: set === "wild" ? sourceUrl : null,
-      license: set === "wild" ? license : "own",
+      // Gold is your own photos; wild licenses aren't tracked (D9 as revised 2026-10-26)
+      source_url: photo.sourceUrl,
+      license: set === "wild" ? "other-permitted" : "own",
       notes,
     };
     try {
@@ -344,7 +322,7 @@ export default function LabelerPage() {
         const file = firstImage(e.dataTransfer.files);
         const url = droppedUrl(e.dataTransfer);
         if (file) ingest(file, url);
-        else if (url && set === "wild") ingest(url, url);
+        else if (url && set === "wild") ingest(url);
       }}
     >
       <section className={styles.photo} aria-label="Photo">
@@ -398,31 +376,6 @@ export default function LabelerPage() {
             {photo && status}
           </p>
         </div>
-
-        {set === "wild" && (
-          <div className={styles.source}>
-            <label>
-              Source page
-              <input
-                type="url"
-                placeholder="https://"
-                value={sourceUrl}
-                onChange={(e) => setSourceUrl(e.target.value.trim())}
-              />
-            </label>
-            <label>
-              License
-              <select value={license} onChange={(e) => setLicense(e.target.value as License | "")}>
-                <option value="">Choose…</option>
-                {LICENSES.filter((l) => l !== "own").map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        )}
 
         <fieldset className={styles.kinds} disabled={!photo}>
           <legend>Kind</legend>

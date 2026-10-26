@@ -5,7 +5,7 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { ingestWild, NearDuplicateError } from "./store";
 
-const source = { url: "https://www.flickr.com/photos/x/1", license: "cc-by" } as const;
+const source = "https://www.flickr.com/photos/x/1";
 
 function wildDir(): string {
   return join(mkdtempSync(join(tmpdir(), "dupes-")), "wild");

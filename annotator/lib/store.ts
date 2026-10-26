@@ -20,9 +20,14 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
-import { checkLabel, SETS, type Label, type License, type Split } from "./labels";
+import { fingerprint, isNearDuplicate } from "./duplicates";
+import { checkLabel, SETS, type Label, type Split } from "./labels";
 
 const MAX_SIDE = 1600;
+
+export function isMissing(e: unknown): boolean {
+  return (e as NodeJS.ErrnoException).code === "ENOENT";
+}
 
 /** Where a photo lives inside its set folder. */
 export function photoFile(sha1: string): string {
@@ -67,58 +72,33 @@ export class NearDuplicateError extends Error {
   }
 }
 
-// Fingerprints this many bits apart (of 64) or fewer count as the same picture
-const NEAR_DUPLICATE_BITS = 6;
-
 /**
- * Save a wild photo with where it came from (D9). Refuses a near-duplicate of a wild photo
- * already saved: a pasted copy and the downloaded file of one photo hash differently, and
- * could otherwise land in different splits, leaking between sim and eval.
+ * Save a wild photo, with the address it came from when the browser gave one. Refuses a
+ * near-duplicate of a wild photo already added this way: a pasted copy and the downloaded file
+ * of one photo hash differently, and could otherwise land in different splits.
  */
 export async function ingestWild(
   setDir: string,
   input: Buffer,
-  source: { url: string; license: License },
+  sourceUrl: string | null,
 ): Promise<{ sha1: string; file: string }> {
   const sha1 = createHash("sha1").update(input).digest("hex");
   if (existsSync(join(setDir, photoFile(sha1)))) return { sha1, file: photoFile(sha1) };
   const jpeg = await decodeToJpeg(input);
   const phash = await fingerprint(jpeg);
   for (const other of readSources(setDir).values()) {
-    if (other.phash && bitsApart(phash, other.phash) <= NEAR_DUPLICATE_BITS) throw new NearDuplicateError(other.sha1);
+    if (other.phash && isNearDuplicate(phash, other.phash)) throw new NearDuplicateError(other.sha1);
   }
   writePhoto(setDir, sha1, jpeg);
-  appendSource(setDir, { sha1, phash, source_url: source.url, license: source.license });
+  appendSource(setDir, { sha1, phash, ...(sourceUrl ? { source_url: sourceUrl } : {}) });
   return { sha1, file: photoFile(sha1) };
-}
-
-/** 64-bit difference hash as 16 hex digits: shrink to 9x8 gray, one bit per pixel darker than its right neighbor. */
-async function fingerprint(jpeg: Buffer): Promise<string> {
-  const px = await sharp(jpeg).grayscale().resize(9, 8, { fit: "fill" }).raw().toBuffer();
-  let hex = "";
-  for (let y = 0; y < 8; y++) {
-    for (let half = 0; half < 2; half++) {
-      let nibble = 0;
-      for (let x = half * 4; x < half * 4 + 4; x++) nibble = (nibble << 1) | (px[y * 9 + x] < px[y * 9 + x + 1] ? 1 : 0);
-      hex += nibble.toString(16);
-    }
-  }
-  return hex;
-}
-
-function bitsApart(a: string, b: string): number {
-  let count = 0;
-  for (let i = 0; i < a.length; i++) {
-    for (let d = parseInt(a[i], 16) ^ parseInt(b[i], 16); d; d >>= 1) count += d & 1;
-  }
-  return count;
 }
 
 /**
  * Where each photo came from, one JSON line per fact in <set>/sources.jsonl: the inbox frame it
- * was taken from, or the web page and license of a wild photo, plus its fingerprint.
+ * was taken from, or a wild photo's address and fingerprint.
  */
-export type Source = { sha1: string; frame?: string; source_url?: string; license?: License; phash?: string };
+export type Source = { sha1: string; frame?: string; source_url?: string; phash?: string };
 
 export function appendSource(setDir: string, source: Source): void {
   mkdirSync(setDir, { recursive: true });
@@ -131,7 +111,7 @@ export function readSources(setDir: string): Map<string, Source> {
   try {
     text = readFileSync(join(setDir, "sources.jsonl"), "utf8");
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return new Map();
+    if (isMissing(e)) return new Map();
     throw e;
   }
   const sources = new Map<string, Source>();
@@ -230,7 +210,7 @@ export function readLabels(setDir: string): Map<string, Label> {
   try {
     text = readFileSync(path, "utf8");
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return latest; // no labels yet
+    if (isMissing(e)) return latest; // no labels yet
     throw e;
   }
   text.split("\n").forEach((line, i) => {

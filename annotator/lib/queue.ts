@@ -1,8 +1,8 @@
 // What to label next: photos without a label line, then frames waiting in the inbox.
 import { mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { SHA1_RE, type License } from "./labels";
-import { appendSource, ingestImage, NotAnImageError, photoFile, readLabels, readSources } from "./store";
+import { SHA1_RE } from "./labels";
+import { appendSource, ingestImage, isMissing, NotAnImageError, photoFile, readLabels, readSources } from "./store";
 
 // Frames from pipeline/gold/sample_frames.py are JPEGs; dropped-in photos may be anything here
 const IMAGE_FILE = /\.(jpe?g|png|heic|heif)$/i;
@@ -10,23 +10,14 @@ const IMAGE_FILE = /\.(jpe?g|png|heic|heif)$/i;
 /**
  * video: the recording an inbox frame came from ("abbey road" for "abbey road-03.jpg", the
  * sampler's <video-stem>-NN.jpg naming), so the page can tell when the record changes.
- * Null for a photo that was pasted or dropped in. source: a wild photo's web page and license,
- * as given when it was added, so labeling it later (after a reload) still has them.
+ * Null for a photo that was pasted or dropped in. sourceUrl: the address a wild photo came
+ * from, when the browser gave one, so labeling it later still records it.
  */
-export type QueueItem = {
-  sha1: string;
-  file: string;
-  video: string | null;
-  source: { url: string; license: License } | null;
-};
+export type QueueItem = { sha1: string; file: string; video: string | null; sourceUrl: string | null };
 
 // The sampler writes exactly two digits; "scan-1.jpg" dropped in by hand is its own photo
 function videoOf(frameName: string): string {
   return frameName.replace(/\.[^.]+$/, "").replace(/-\d{2}$/, "");
-}
-
-function isMissing(e: unknown): boolean {
-  return (e as NodeJS.ErrnoException).code === "ENOENT";
 }
 
 /** Unlabeled photos, oldest first, so frames keep the order they came in. */
@@ -95,9 +86,9 @@ export async function nextInQueue(
     const remaining = pending.length + inbox.length;
     const sha1 = pending.find((p) => !skipped.has(p));
     if (sha1) {
-      const { frame, source_url, license } = readSources(setDir).get(sha1) ?? {};
-      const source = source_url && license ? { url: source_url, license } : null;
-      return { next: { sha1, file: photoFile(sha1), video: frame ? videoOf(frame) : null, source }, remaining };
+      const { frame, source_url } = readSources(setDir).get(sha1) ?? {};
+      const next = { sha1, file: photoFile(sha1), video: frame ? videoOf(frame) : null, sourceUrl: source_url ?? null };
+      return { next, remaining };
     }
     if (inbox.length === 0) return { next: null, remaining };
     await takeFromInbox(setDir, inbox[0]);

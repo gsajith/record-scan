@@ -56,6 +56,5 @@ export function checkLabel(set: SetName, input: unknown): { label: Label } | { e
   if (label.kind !== "positive" && label.mbid !== null) {
     return { error: `a ${label.kind} label must not carry an mbid` };
   }
-  if (set === "wild" && !label.source_url) return { error: "a wild photo needs a source_url (and a license)" };
   return { label };
 }
