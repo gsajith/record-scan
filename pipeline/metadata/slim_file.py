@@ -62,28 +62,28 @@ def slim_dump(dump: Path, releases_out: Path, artists_out: Path) -> int:
             for line in tar.stdout:
                 seen += 1
                 try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:  # one bad line should not cost an hour-long run
+                    slim = slim_record(json.loads(line))
+                except (ValueError, TypeError, AttributeError, KeyError):  # one bad line should not cost an hour
                     bad += 1
                     print(f"skipped a malformed line {seen:,}: {line[:80]!r}", flush=True)
                     continue
-                slim = slim_record(obj)
                 if slim is not None:
                     kept += 1
                     out.write(json.dumps(slim["release"], ensure_ascii=False) + "\n")
                     artists.update(slim["artists"])  # later credits win, as in 2025
                 if seen % 250_000 == 0:
                     print(f"{seen:,} read, {kept:,} kept, {seen / (time.monotonic() - start):,.0f} lines/s", flush=True)
+        if tar.wait() != 0:
+            raise SystemExit(f"tar exited with {tar.returncode}; {releases_out} not written")
     except BaseException:
         tar.kill()
         tmp.unlink(missing_ok=True)
         raise
-    if tar.wait() != 0:
-        raise SystemExit(f"tar exited with {tar.returncode}; {releases_out} not written")
-    os.replace(tmp, releases_out)
+    # Artists first: build_catalog_db picks the newest releases file and expects its artists beside it
     artists_tmp = artists_out.with_name(artists_out.name + ".tmp")
     artists_tmp.write_text(json.dumps(artists, ensure_ascii=False))
     os.replace(artists_tmp, artists_out)
+    os.replace(tmp, releases_out)
     print(f"{seen:,} releases read, {kept:,} with cover art, {len(artists):,} artists, {bad:,} malformed lines")
     return kept
 

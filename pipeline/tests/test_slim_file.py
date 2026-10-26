@@ -58,8 +58,9 @@ def test_slim_record_keeps_an_empty_artist_name():
     assert slim_record(line)["artists"] == {FLOYD: {"name": ""}}
 
 
-def test_slim_dump_skips_a_malformed_line(tmp_path):
-    body = (json.dumps(dump_line()) + "\n{not json\n").encode()
+def test_slim_dump_skips_malformed_lines(tmp_path):
+    odd = json.dumps(dump_line(**{"artist-credit": [{"artist": None}]}))  # valid JSON, unexpected shape
+    body = (json.dumps(dump_line()) + "\n{not json\n" + odd + "\n").encode()
     dump = tmp_path / "release.tar.xz"
     with tarfile.open(dump, "w:xz") as tar:
         info = tarfile.TarInfo("mbdump/release")

@@ -14,8 +14,9 @@ we already have, and asks the Cover Art Archive for the best front of releases w
 (new releases, and ones whose cover was deleted). New images land on the drive beside the 2025
 covers as <mbid>-<cover_id>.jpg, and a file that already exists is never replaced. Writes the
 full list of covers to META_DIR/covers-<date>.jsonl for build_catalog_db. Rerunning resumes
-from META_DIR/fetched-<date>.jsonl, which logs every image landed and every lookup that found
-no usable cover; the drive itself is never listed, since 3M files take too long to scan.
+from META_DIR/fetched-<date>.jsonl, which logs every image landed, every lookup that found no
+usable cover and every image archive.org has no 500 px file for; the drive itself is never
+listed, since 3M files take too long to scan.
 """
 
 import argparse
@@ -105,10 +106,10 @@ def plan_covers(
 def get_with_backoff(session, url: str, sleep: Callable[[float], None] = time.sleep, tries: int = 7) -> requests.Response | None:
     """GET url, or None on 404. Backs off 5 s, doubling to 60 s, on 429, 5xx and dropped connections.
 
-    A 500 gives up after BROKEN_TRIES. Raises once tries run out; the caller logs the release
-    and a rerun retries it.
+    The third 500 (BROKEN_TRIES) gives up early. Raises once tries run out; the caller logs the
+    release and a rerun retries it.
     """
-    delay = 5.0
+    delay, broken = 5.0, 0
     for attempt in range(1, tries + 1):
         try:
             resp = session.get(url, timeout=30)
@@ -118,9 +119,8 @@ def get_with_backoff(session, url: str, sleep: Callable[[float], None] = time.sl
         else:
             if resp.status_code == 404:
                 return None
-            if resp.status_code not in RETRY_STATUS or attempt == tries or (
-                resp.status_code == 500 and attempt == BROKEN_TRIES
-            ):
+            broken += resp.status_code == 500
+            if resp.status_code not in RETRY_STATUS or attempt == tries or broken == BROKEN_TRIES:
                 resp.raise_for_status()
                 return resp
         sleep(delay)
@@ -268,6 +268,7 @@ def run(
     log_path = config.META_DIR / f"fetched-{date}.jsonl"
     landed: dict[str, Cover] = {}  # file -> cover, for images this update put on the drive
     no_cover: set[str] = set()     # releases whose lookup found no usable image
+    missing: set[str] = set()      # files archive.org has no 500 px image for
     if log_path.exists():
         with log_path.open(encoding="utf-8") as f:
             for line in f:
@@ -277,11 +278,14 @@ def run(
                     continue
                 if r["cover_id"] is None:
                     no_cover.add(r["mbid"])
+                    if r.get("file"):
+                        missing.add(r["file"])
                 else:
                     landed[r["file"]] = Cover(**r)
-    looked_up = no_cover | {c.mbid for c in landed.values() if c.primary}  # only lookups land primaries
+    # A download can land a primary too, but its release is never in plan.lookup
+    looked_up = no_cover | {c.mbid for c in landed.values() if c.primary}
 
-    downloads = [c for c in plan.download if c.file not in landed]
+    downloads = [c for c in plan.download if c.file not in landed and c.file not in missing]
     lookups = [m for m in plan.lookup if m not in looked_up]
     # Alternate the two kinds of work so a --limit run exercises both
     pending: list[Cover | str] = [x for x in chain(*zip_longest(downloads, lookups)) if x is not None]
@@ -316,7 +320,11 @@ def run(
                 record({"mbid": item, "cover_id": None})
                 return False
             cover = Cover(item, cover_id, new_file(item, cover_id), True)
-        download(session, cover, image_root, sleep)
+        try:
+            download(session, cover, image_root, sleep)
+        except LookupError:  # a 404 now is a 404 on every rerun
+            record({"mbid": cover.mbid, "cover_id": None, "file": cover.file})
+            return False
         landed[cover.file] = cover
         record(asdict(cover))
         return True

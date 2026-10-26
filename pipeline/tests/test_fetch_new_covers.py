@@ -112,6 +112,12 @@ def test_get_gives_up_sooner_on_500():
     with pytest.raises(requests.HTTPError):
         get_with_backoff(ScriptedSession({"u": [FakeResponse(500)] * 7}), "u", sleep=waits.append)
     assert waits == [5, 10]
+    # It counts 500s, not attempts: a busy server first does not use them up
+    waits.clear()
+    with pytest.raises(requests.HTTPError):
+        get_with_backoff(ScriptedSession({"u": [FakeResponse(503)] * 2 + [FakeResponse(500)] * 5}), "u",
+                         sleep=waits.append)
+    assert waits == [5, 10, 20, 40]
 
 
 def test_get_returns_none_on_404_and_gives_up_eventually():
@@ -216,6 +222,18 @@ def test_run_reruns_work_cut_short_by_a_crash(world):
     # The cut-short line no longer swallows the records after it
     records = [json.loads(line) for line in log.read_text().splitlines()[3:]]
     assert {"mbid": mbid(2), "cover_id": "201", "file": f"00/{mbid(2)}-201.jpg", "primary": True} in records
+
+
+def test_run_logs_an_image_archive_org_lacks_so_reruns_skip_it(world):
+    no_images = FakeResponse(200, {"images": []})
+    first = ScriptedSession({caa_image(1, 101): [FakeResponse(404)], caa_json(2): [no_images], caa_json(3): [no_images]})
+    counts = run(DATE, SINCE, session=first, sleep=lambda s: None)
+    assert (counts.no_cover, counts.failed) == (3, 0)
+    assert Cover(mbid(1), "100", f"00/{mbid(1)}.jpg", True) in read_manifest(world)
+
+    idle = ScriptedSession({})
+    assert run(DATE, SINCE, session=idle, sleep=lambda s: None).pending == 0
+    assert idle.calls == []
 
 
 def test_run_stops_when_the_drive_goes_away(world):
