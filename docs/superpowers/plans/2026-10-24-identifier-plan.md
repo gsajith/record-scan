@@ -6,7 +6,7 @@
 
 **Architecture:** Phase A builds the measuring instruments (labeler, gold and wild sets, catalog search, retrieval core, gallery pass, catalog update job, export spike) and runs the frozen-backbone sweep. Nothing in Phase A trains a model. Phases B to D (hybrid v1, simulator, head, fine-tune, distillation, index compression, lock calibration) are gated on Phase A's numbers and are outlined here; their tasks get written at full detail after Step 4's measurements exist, because the model and the dimensions they depend on are unknown until then.
 
-**Tech stack:** Python 3.12, PyTorch 2.8 (MPS), Hugging Face transformers and timm for backbones, open_clip for the CLIP baseline, hnswlib and faiss-cpu, WebDataset shards, SQLite FTS5, imagehash, ffmpeg. Next.js 16 (the `annotator/` app, repurposed as the labeler) with better-sqlite3 and zod. coremltools 9 and ExecuTorch 1.x for the export spike.
+**Tech stack:** Python 3.12, PyTorch 2.8 (MPS), Hugging Face transformers and timm for backbones, open_clip for the CLIP baseline, hnswlib and faiss-cpu, WebDataset shards, SQLite FTS5, imagehash, ffmpeg. Next.js 16 (the `annotator/` app, repurposed as the labeler) with zod and Node 24's built-in `node:sqlite` (chosen over better-sqlite3 in Task 3: no native build, and npm 11 would need its install script approved). coremltools 9 and ExecuTorch 1.x for the export spike.
 
 **Spec:** `docs/research/reports/On device album cover retrieval 2026.md` (the twelve gated steps and the evidence behind them) plus the research notes beside it. Decisions D8 to D13 below extend the recovery plan's D1 to D7. Where this plan and the report differ, this plan wins; it records why.
 
@@ -41,7 +41,7 @@
 
 ## Decisions
 
-- **D8 Labeler is local-only.** The `annotator/` app runs on the Mac, writes files under `RS_DATA_DIR`, and has no cloud backend. Couch use goes through Tailscale. Supabase code is removed. (Gautham, 2026-10-24.)
+- **D8 Labeler is local-only.** The `annotator/` app runs on the Mac, writes files under `RS_DATA_DIR`, and has no cloud backend. It listens on 127.0.0.1 only and refuses cross-site API calls; no Tailscale or other remote access (Gautham, 2026-10-25). Supabase code is removed. (Gautham, 2026-10-24.)
 - **D9 Candid internet photos are allowed for evaluation and simulator fitting, with a license filter and a one-time split.** Sources: Flickr Creative Commons, Wikimedia Commons, Pexels, Unsplash, Creative Commons YouTube frames. No Instagram, nothing unlicensed. Half (by hash) feeds simulator statistics and backgrounds; half is evaluation. Nothing from either half is used to train weights unless its license is CC0 or equivalent and Gautham says so.
 - **D10 Gallery working copy at 256 px short side, JPEG quality 90, in WebDataset tar shards keyed by MBID.** One pass over the drive produces it together with a 64-bit pHash per cover. Later steps read the shards, not the drive.
 - **D11 Catalog updates come from a fresh MusicBrainz dump, re-slimmed, plus the Cover Art Archive dump.** (Revised by Gautham, 2026-10-25.) The first version planned to list new items through Internet Archive search, but every Cover Art Archive item there is `noindex`: the scrape API finds 230 of millions. So an update downloads the latest JSON `release.tar.xz` and re-slims it with `release_group` kept, and diffs it against the catalog. The 162 MB `mbdump-cover-art-archive.tar.bz2` from the full export tells which old covers are still upstream and which old releases gained a front. coverartarchive.org gives the best front for each release with no cover left, as in 2025. No MusicBrainz web service calls, so a run takes hours, not days. Old covers stay while they exist upstream and new fronts are added beside them as `<mbid>-<cover_id>.jpg` on the drive; covers deleted upstream leave the catalog but stay on disk. MetaBrainz publishes dumps twice a week, so the cadence is whatever is useful.
@@ -178,8 +178,8 @@ JSONL record keys are exactly the `Label` field names. `labeled_at` is ISO 8601 
 
 **Files:**
 - Delete: `annotator/lib/supabaseClient.ts`, `annotator/app/api/upload/route.ts`, `annotator/app/api/save/route.ts`
-- Create: `annotator/lib/labels.ts`, `annotator/lib/data.ts` (paths under `RS_DATA_DIR`), `annotator/lib/catalog.ts` (better-sqlite3 read-only connection), `annotator/app/api/search/route.ts`, `annotator/app/api/ingest/route.ts`, `annotator/app/api/label/route.ts`, `annotator/app/api/queue/route.ts`, `annotator/app/api/image/[set]/[sha1]/route.ts`, `annotator/lib/labels.test.ts`
-- Modify: `annotator/app/page.tsx` (new UI), `annotator/package.json` (add `better-sqlite3`, `zod`, `vitest`; remove `@supabase/supabase-js`), `annotator/README.md`, `.env.example` (add `RS_DATA_DIR`)
+- Create: `annotator/lib/labels.ts`, `annotator/lib/data.ts` (paths under `RS_DATA_DIR`), `annotator/lib/catalog.ts` (`node:sqlite` read-only connection), `annotator/app/api/search/route.ts`, `annotator/app/api/ingest/route.ts`, `annotator/app/api/label/route.ts`, `annotator/app/api/queue/route.ts`, `annotator/app/api/image/[set]/[sha1]/route.ts`, `annotator/lib/labels.test.ts`
+- Modify: `annotator/app/page.tsx` (new UI), `annotator/package.json` (add `zod`, `sharp`, `vitest`; remove `@supabase/supabase-js`), `annotator/README.md`, `.env.example` (add `RS_DATA_DIR`)
 
 **Interfaces (produces):**
 ```ts
@@ -190,11 +190,11 @@ export function splitFor(set: "gold" | "wild", sha1: string): "eval" | "sim"   /
 // API
 GET  /api/search?q=...&limit=20          -> { results: [{ mbid, title, artists, format, year?, thumb: "https://coverartarchive.org/release/<mbid>/front-250" }] }
 POST /api/ingest   multipart { set, file } | json { set, url, source_url, license }   -> { sha1, split, file }   // saves <set>/photos/<sha1>.jpg (re-encodes to JPEG, max side 1600), refuses a wild image without source_url + license, returns existing record if sha1 already present
-GET  /api/queue?set=gold                  -> { next: { file, sha1 } | null, remaining }   // unlabeled images in <set>/inbox/ and photos/ without a label line
+POST /api/queue   json { set, skip }      -> { next: { file, sha1, video } | null, remaining, counts }   // photos/ without a label line, then <set>/inbox/ frames (moved to inbox/done/); video lets the page keep the album within one recording; counts per set and split
 POST /api/label    json Label             -> { ok: true }   // validates with LabelSchema, split recomputed server-side, appends to <set>/labels.jsonl
 GET  /api/image/<set>/<sha1>              -> the JPEG (so the page can show local files)
 ```
-Page flow: pick set (gold or wild); paste (Ctrl+V image or URL), drop files or URLs, or press N for the next inbox item; image fills the left pane; right pane has the search box (debounced, results with thumbnails, arrow keys to move, Enter to pick), a kind toggle (positive, negative, unknown) with hotkeys P N U, tag checkboxes with hotkeys 1 to 9 and 0, license select and source field (prefilled from the drop when the browser provides it), notes, and Save (Enter). After Save the next item loads. A status strip shows counts per set and per split.
+Page flow: pick set (gold or wild); paste (Ctrl+V image or URL), drop files or URLs; the next unlabeled photo or inbox frame loads on open and after each save, and S skips one; image fills the left pane; right pane has the search box (debounced, results with thumbnails, arrow keys to move, Enter to pick), a kind toggle (positive, negative, unknown) with hotkeys P N U, tag checkboxes with hotkeys 1 to 9, 0, - and = (twelve tags), / to focus search, license select and source field (prefilled from the drop when the browser provides it), notes, and Save (Enter). After Save the next item loads; the picked album and kind carry over between frames of the same video and reset for a new one. A status strip shows counts per set and per split.
 
 - [ ] Step 1: Failing vitest cases: `splitFor` against the same five literal sha1 values as `SPLIT_VECTORS` in `pipeline/tests/test_labels.py`, `LabelSchema` rejects a wild label without license, accepts a gold label with `license: "own"`.
 - [ ] Step 2: Run, FAIL. Then implement routes and page; `npm run lint && npx tsc --noEmit && npx vitest run` clean.
@@ -224,9 +224,9 @@ def load_embedder(name: str, device: str | None = None, input_px: int | None = N
 def query_views(img: Image.Image) -> list[Image.Image]            # [center square crop, 10% tighter crop, gray-padded so the object fills 70%]; the report's three scales
 
 # embed.py   CLI: python -m pipeline.retrieval.embed --model NAME (--prefixes 00 01 | --all | --uuids FILE) [--source drive|shards] [--batch 64] [--workers 6] [--px 224]
-def embed_images(paths: list[Path], embedder: Embedder, batch: int, workers: int) -> tuple[list[str], np.ndarray]   # keyed by file stem (mbid); unreadable files logged to <out>/errors.log and skipped
-def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, source: str, batch: int, workers: int) -> int        # writes out_dir/<prefix>.npz once (uuids U36, embs float16) and <prefix>.done
-def pending_prefixes(out_dir: Path, source: str) -> list[str]
+def embed_images(paths: list[Path], embedder: Embedder, batch: int, workers: int, errors_log: Path) -> tuple[list[str], np.ndarray]   # keyed by file stem (mbid); unreadable files logged to errors_log and skipped
+def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, batch: int, workers: int) -> int        # writes out_dir/<prefix>.npz once (uuids U36, embs float16), <prefix>.errors.log and <prefix>.done; source param added with shards (Task 5)
+def pending_prefixes(out_dir: Path) -> list[str]                  # source param added with shards (Task 5)
 
 # build_index.py   CLI: python -m pipeline.retrieval.build_index --model NAME [--M 32] [--ef-construction 200]
 def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construction: int) -> int   # verifies dims; writes index.hnsw + labels.npy (U36)
@@ -256,6 +256,16 @@ Per-tag recall is reported with its count so a slice of three photos is visibly 
 - [ ] Step 1: Failing tests: `test_each_embedder_unit_vectors` (parametrized, `@pytest.mark.slow`, two fixture images, shape and norm; skips gated models when `HF_TOKEN` is unset with a clear message), `test_query_views_three_sizes`, `test_embed_prefix_skips_corrupt_and_resumes`, `test_build_index_and_identify_roundtrip` (synthetic vectors, duplicates collapse by album_key), `test_is_hit_rules`, `test_eval_report_metrics_and_slices` (hand-built rows), `test_load_eval_set_uses_eval_split_only`.
 - [ ] Step 2: Run, FAIL. Step 3: Implement. Step 4: all pass; smoke: build an index from the 2025-11 shards (`clip-vit-b-32-aug13`, allow_pickle, cast uuids) and identify a CAA `front-500` for a uuid in prefix 00.
 - [ ] Step 5: `git rm` the two old scripts. Commit `feat(pipeline): retrieval core with seven backbones, query views and slice eval`.
+
+Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_views`, `embed.py`, the `build_index.py` rewrite and `identify.py`, with their tests. The smoke run returned each of three prefix-00 covers first, and a phone photo of The Dark Side of the Moon came back first; numbers in `docs/results/2026-10-25-clip-baseline-smoke.md`. #16 (eval) and #18 (six more backbones) remain, so the steps above stay open. Notes for them:
+- The two old scripts were already removed in d3c1455, so Step 5 has nothing left to `git rm`.
+- CLIP loads as `ViT-B-32-quickgelu`, which matches how OpenAI trained the weights. The 2025-11 shards were built with plain `ViT-B-32` (GELU), so QuickGELU queries reach only 0.92 to 0.96 against their own covers. Never mix the two in one index.
+- `query_views` applies EXIF orientation first, so a portrait phone photo is not embedded sideways.
+- `identify` widens its search past k*10 neighbours when one big group, such as the 38 Abbey Road releases, fills them and fewer than k albums come back.
+- `embed.py` reads the drive only and has no `--source shards`, `--uuids` or `--px` yet. Tasks 5 and 7 add them along with their first callers. If the drive drops mid-prefix, it exits without marking the prefix done.
+- Deferred from the PR #37 review, both for when Task 5's shards remove the drive bottleneck: run `preprocess` in the decode workers instead of the main thread, and cache `album_key` lookups in `Identifier` for eval runs.
+- `identify` keeps an album with an empty title or artist key, such as Ed Sheeran's "+" and "÷", as its own group. The eval's hit rule (#16) has the same collision to decide on.
+- HNSW at the default `ef=128` returned the right top-1 album for 99.8% of 500 noisy queries on the 2025-11 index, with no gain up to `ef=1024`. Eval at 50k distractors can use exact search if that 0.2% matters.
 
 ### Task 5: the gallery pass (Step 1): shards, hashes, duplicate clusters
 
@@ -385,7 +395,6 @@ Nothing here is deleted by an agent. Each row names the task whose completion ma
 | Item under `~/Projects/record-scan-data` | Size | Removable after | Why |
 |---|---|---|---|
 | `metadata/uuid_to_metadata.json` | 840 MB | Task 1 (catalog.sqlite built, tests pass) | `Catalog` replaces it; regenerable from `slim_releases_with_covers.json` in a minute anyway |
-| `embeddings/clip-vit-b-32-aug13/` | 300 MB | Task 4 (its smoke test is the last reader) | November 2025 augmented shards; the one-vector design never uses them |
 | `_archive-album-annotator-2025-11/` | about 28 MB after cleanup | Task 3 (labeler merged) | the GitHub repo gsajith/album-annotator is archived and holds the same history |
 | `_archive-mbdump-2025-11/` | about 1.1 GB after cleanup, almost all `.git` | Task 6 (catalog update merged) | the scripts are in `pipeline/legacy/`; only the August 2025 commit history remains here |
 | `musicbrainz-dump-2025-08-13/` | 17 GB | Task 6 (catalog rebuilt from the 2026-10-24 slim) | superseded by the 2026-10-24 dump |
@@ -394,7 +403,7 @@ Nothing here is deleted by an agent. Each row names the task whose completion ma
 | `~/.cache/clip` (1.2 GB), `~/.cache/torch/hub/checkpoints` (1.2 GB), HF `models--openai--clip-vit-base-patch32` (1.1 GB) | 3.5 GB | now | the OpenAI `clip` package, DINOv2 hub weights and transformers CLIP are not used by the new retrieval core |
 | HF `models--timm--vit_base_patch32_clip_224.openai` | 577 MB | keep | open_clip loads the `clip-vit-b-32` baseline from this cache |
 
-Already removed on 2026-10-24 at Gautham's request: `_archive-mbdump-2025-11/venv` (1.4 GB) and `_archive-album-annotator-2025-11/node_modules` (419 MB).
+Already removed on 2026-10-24 at Gautham's request: `_archive-mbdump-2025-11/venv` (1.4 GB) and `_archive-album-annotator-2025-11/node_modules` (419 MB). On 2026-10-25, after issue #15 merged: `embeddings/clip-vit-b-32-aug13/` (1.1 GB with the smoke index), the November 2025 augmented shards built with the GELU config.
 
 ---
 
