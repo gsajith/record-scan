@@ -12,16 +12,16 @@
 
 **Contents:** Global constraints, Review focus, Decisions, What only Gautham can do (tasks and checkpoints), Layout, Phase A (Tasks 1 to 9), Phases B to D (outline), Data you can delete and when, Self-review notes.
 
-**Status:** Tasks 1 and 2 done. Next: Task 3, the labeler.
+**Status:** Tasks 1 and 2 done. Task 6 code is in; its full cover fetch runs until about 2026-10-27, then a catalog rebuild finishes it. Next: Task 3, the labeler.
 
 ## Global constraints
 
 - Everything from the recovery plan's Global constraints still applies: never `git add` data, agents delete nothing but regenerable artifacts, Conventional Commits, one venv at `pipeline/.venv`, `require_image_root()` before touching the drive, never `os.makedirs` under `/Volumes`, TypeScript without `any`.
-- Data layout under `RS_DATA_DIR` (default `~/Projects/record-scan-data`): `metadata/` (JSON, `catalog.sqlite`), `gold/` and `wild/` (each with `photos/`, `inbox/`, `labels.jsonl`), `gallery256/` (shards, hashes, clusters), `delta/` (covers and metadata fetched since the dump), `embeddings/<model>/`, `exports/`, `lightbank/`. Config exposes each as a constant.
+- Data layout under `RS_DATA_DIR` (default `~/Projects/record-scan-data`): `metadata/` (JSON, `catalog.sqlite`), `gold/` and `wild/` (each with `photos/`, `inbox/`, `labels.jsonl`), `gallery256/` (shards, hashes, clusters), `musicbrainz-dump-<date>/` (downloaded dumps), `embeddings/<model>/`, `exports/`, `lightbank/`. Config exposes each as a constant.
 - Pipeline modules read `config.X` at call time, never `from pipeline.config import X` at import. Tests generate fixtures into `tmp_path`; no JSON or image fixtures are committed except tiny generated ones under `pipeline/tests/fixtures/` created by `conftest.py`.
 - One label record format, defined once in `pipeline/gold/labels.py` and mirrored in `annotator/lib/labels.ts`, with a shared test vector so the two never drift.
 - Gold photos and the `eval` half of the wild set never enter any training, simulator fitting, or background bank. The split is a deterministic hash, assigned once, shown read-only.
-- External services: Cover Art Archive thumbnails may be hot-linked by the labeler for display only. The MusicBrainz web service gets at most one request per second with a `User-Agent` naming the project and a contact address. Internet Archive search uses the scrape API with cursor resume.
+- External services: Cover Art Archive thumbnails may be hot-linked by the labeler for display only. Requests to coverartarchive.org and the MusicBrainz web service send a `User-Agent` naming the project and a contact address, back off on 429 and 5xx, and the web service gets at most one request per second. Catalog updates use MetaBrainz dumps rather than per-release web service calls (D11).
 - Every measured number lands in `docs/results/<date>-<topic>.md` with the command that produced it, the git SHA, and a hash of the eval config, so the report's decision gates are checked against written evidence. A number without provenance counts as no number.
 - Eval integrity (from Dan Luu's "There's no point at which turning your brain off will work", 2026): the hit rule, the eval and sim split, the distractor sampler and its seeds are locked in their own reviewed commit before any model work. A later change to any of them needs a recorded ruling in the ledger and its own commit; it never lands in a task that also touches model, simulator or training code. Reviewers of model tasks check the diff for edits to `eval.py`, `labels.py`, seeds and hit logic and report any as Important.
 - Sealed holdout: Gautham keeps about a third of his records (videos and frames) outside `RS_DATA_DIR`, in a folder no agent is told about, labeled with the same labeler against a second data dir. It is scored once per phase, by Gautham, with the same `eval.py`. Agents never see it.
@@ -34,7 +34,7 @@
 2. Split drift: the Python and TypeScript `split_for(sha1)` return the same answer for the same input; the same five literal sha1 values are asserted in both suites. Tests in Tasks 2 and 3.
 3. Catalog search misses on accents and case: "bjork" finds Björk and "the beatles" finds "Beatles, The"; FTS5 is built with `unicode61 remove_diacritics 2`. Test in Task 1.
 4. A corrupt JPEG or an unmounted drive mid-run: the gallery pass logs and skips the file, finishes the prefix, and resumes per prefix on rerun; it never creates folders under `/Volumes`. Test in Task 5.
-5. Rate-limit violations: the delta fetcher sleeps at least one second between MusicBrainz requests, backs off on 503, and resumes from its cursor file after a crash. Test in Task 6.
+5. Lost or clobbered covers in a catalog update: the cover fetcher never overwrites or deletes a file on the drive, keeps an old cover while it is still upstream, backs off on 503, and resumes from its lookup log after a crash without repeating a request. Test in Task 6.
 6. Metric gaming: a model task that changes the hit rule, the split, seeds or test assertions so that a number improves without the model improving. Reviewers check for it in every task from Task 4 on; the eval-integrity constraint forbids it in the same commit.
 
 ---
@@ -44,7 +44,7 @@
 - **D8 Labeler is local-only.** The `annotator/` app runs on the Mac, writes files under `RS_DATA_DIR`, and has no cloud backend. It listens on 127.0.0.1 only and refuses cross-site API calls; no Tailscale or other remote access (Gautham, 2026-10-25). Supabase code is removed. (Gautham, 2026-10-24.)
 - **D9 Candid internet photos are allowed for evaluation and simulator fitting, with a license filter and a one-time split.** Sources: Flickr Creative Commons, Wikimedia Commons, Pexels, Unsplash, Creative Commons YouTube frames. No Instagram, nothing unlicensed. Half (by hash) feeds simulator statistics and backgrounds; half is evaluation. Nothing from either half is used to train weights unless its license is CC0 or equivalent and Gautham says so.
 - **D10 Gallery working copy at 256 px short side, JPEG quality 90, in WebDataset tar shards keyed by MBID.** One pass over the drive produces it together with a 64-bit pHash per cover. Later steps read the shards, not the drive.
-- **D11 Catalog updates come from the Cover Art Archive's Internet Archive index, not from a new dump.** A monthly job lists items added or updated since the last run, downloads new front covers, and fetches metadata from the MusicBrainz web service. A full dump re-slim stays an annual job and is where the release-group id gets added.
+- **D11 Catalog updates come from a fresh MusicBrainz dump, re-slimmed, plus the Cover Art Archive dump.** (Revised by Gautham, 2026-10-25.) The first version planned to list new items through Internet Archive search, but every Cover Art Archive item there is `noindex`: the scrape API finds 230 of millions. So an update downloads the latest JSON `release.tar.xz` and re-slims it with `release_group` kept, and diffs it against the catalog. The 162 MB `mbdump-cover-art-archive.tar.bz2` from the full export tells which old covers are still upstream and which old releases gained a front. coverartarchive.org gives the best front for each release with no cover left, as in 2025. No MusicBrainz web service calls, so a run takes hours, not days. Old covers stay while they exist upstream and new fronts are added beside them as `<mbid>-<cover_id>.jpg` on the drive; covers deleted upstream leave the catalog but stay on disk. MetaBrainz publishes dumps twice a week, so the cadence is whatever is useful.
 - **D13 Oldest target phone (open, Gautham decides before Task 8 reports).** The 30 ms p95 latency bar and the memory budget are defined against the oldest phone the app must run well on, one iPhone and one Android. Until named, the export spike reports numbers for every phone available and the gate cannot be applied.
 - **D12 Mobile shell framework: proposed Expo (React Native) with VisionCamera frame processors and `react-native-executorch` for one codebase on both platforms; native Swift and Kotlin if the export spike shows the React Native path cannot hit the latency bar.** Not needed in Phase A: iOS device timing comes from Xcode's Core ML performance report on a connected iPhone, which needs no app. Gautham confirms or overrides before Phase B's Task 12.
 
@@ -80,11 +80,12 @@ Also before Phase B spends money: ten minutes reading the DINOv3 license text an
 ```
 record-scan/
   pipeline/
-    config.py                      + CATALOG_DB, WILD_DIR, GALLERY256_DIR, DELTA_DIR, EXPORTS_DIR, LIGHTBANK_DIR, RESULTS_DIR
+    config.py                      + CATALOG_DB, WILD_DIR, GALLERY256_DIR, EXPORTS_DIR, LIGHTBANK_DIR, RESULTS_DIR
     metadata/
       catalog.py                   SQLite-backed Catalog: release(), search(), album_key(), find()
-      build_catalog_db.py          JSON + delta -> catalog.sqlite (FTS5)
-      fetch_new_covers.py          Internet Archive delta -> covers + metadata (Task 6)
+      slim_file.py                 JSON dump -> releases-<date>.jsonl + artists-<date>.json (Task 6)
+      build_catalog_db.py          slim + covers list -> catalog.sqlite (FTS5, covers table)
+      fetch_new_covers.py          new dump + CAA dump -> covers on the drive + covers-<date>.jsonl (Task 6)
     gold/
       labels.py                    Label schema, split_for(), load_labels()
       sample_frames.py             ffmpeg video -> frames into inbox/
@@ -136,7 +137,7 @@ def build(releases_json: Path, artists_json: Path, out: Path, delta_dir: Path | 
     #         release_fts USING fts5(mbid UNINDEXED, title, artists, tokenize="unicode61 remove_diacritics 2")
     # returns row count; writes to out + ".tmp" then os.replace
 ```
-Load `slim_releases_with_covers.json` and `release_slim_artists.json` whole (about 6 GB of RAM, fine on the Mac), insert in one transaction with `executemany`, then build the FTS table. Also ingest `delta/releases/*.jsonl` when present (Task 6's output, which carries `release_group`).
+Load `slim_releases_with_covers.json` and `release_slim_artists.json` whole (about 6 GB of RAM, fine on the Mac), insert in one transaction with `executemany`, then build the FTS table. Also ingest `delta/releases/*.jsonl` when present (Task 6's output, which carries `release_group`). Superseded by Task 6: `build(releases_jsonl, artists_json, covers_jsonl, out)` now reads one dated slim plus its covers list, and the delta folder is gone.
 
 - [x] Step 1: Failing tests: `test_normalize` ("The Beatles" -> "beatles"; "Beatles, The" -> "beatles"; "Björk" -> "bjork"; "Abbey Road (Remastered)" keeps its words), `test_build_and_search_tmp_db` (three fake releases written to `tmp_path` JSON, build, `search("bjork")` returns the Björk release, `search("beatl")` prefix-matches, `release(mbid)` round-trips), `test_find_exact`, `test_missing_db_exits`.
 - [x] Step 2: Run, FAIL.
@@ -278,33 +279,54 @@ def process_prefix(prefix: str, out_dir: Path, workers: int) -> tuple[int, int] 
 # cluster_duplicates.py   CLI: python -m pipeline.gallery.cluster_duplicates [--max-distance 8]
 def cluster(phash_files: list[Path], max_distance: int) -> dict[str, int]   # exact-hash union, then Hamming <= max_distance via 4-way multi-index hashing; writes out_dir/clusters.parquet (mbid, cluster_id, cluster_size) and prints N, cluster count, size histogram
 ```
-Both call `config.require_image_root()` first. Time the first prefix and print an ETA for the rest; expect hours at USB-3 speeds. Write to `config.GALLERY256_DIR` on the internal disk, never to the drive.
+List covers from the catalog's `covers` table (Task 6), not by globbing the drive: since Task 6 the drive also holds `<mbid>-<cover_id>.jpg` extra fronts and covers deleted upstream that the catalog dropped. Key shard entries by file stem so an mbid's extra fronts stay distinct. Both call `config.require_image_root()` first. Time the first prefix and print an ETA for the rest; expect hours at USB-3 speeds. Write to `config.GALLERY256_DIR` on the internal disk, never to the drive.
 
 - [ ] Step 1: Failing tests on a tmp image root with three prefixes, one corrupt file, two identical covers under different mbids and one near-duplicate: shard contains the good files at 256 px, errors logged, `.done` resumes, clusters group the identical pair and the near-duplicate at distance <= 8 and not an unrelated image.
 - [ ] Step 2: Run, FAIL. Step 3: Implement. Step 4: tests pass. Real run after H1: `--prefixes 00` first, report time and sizes in `docs/results/<date>-gallery-pass.md`, then `--all` under `nohup caffeinate -i`, then `cluster_duplicates`. Record N (deduplicated), cluster count, and the size histogram in the same results file.
 - [ ] Step 5: Commit `feat(pipeline): gallery pass with 256px shards, phash and duplicate clusters`.
 
-### Task 6: new covers since the dump (D11)
+### Task 6: new covers since the dump (D11, done)
 
 **Files:**
-- Create: `pipeline/metadata/fetch_new_covers.py`, `pipeline/tests/test_fetch_new_covers.py`
-- Modify: `pipeline/metadata/build_catalog_db.py` (already ingests `delta/releases/*.jsonl` per Task 1; confirm the `release_group` column fills)
+- Create: `pipeline/metadata/fetch_new_covers.py`, `pipeline/tests/test_fetch_new_covers.py`, `pipeline/tests/test_slim_file.py`
+- Modify: `pipeline/metadata/slim_file.py` (a tested streaming module, keeps `release_group`), `pipeline/metadata/build_catalog_db.py` and `catalog.py` (JSONL input, `covers` table, `Catalog.covers()`), `pipeline/config.py` (drop `DELTA_DIR`)
 
 **Interfaces (produces):**
 ```python
-# fetch_new_covers.py   CLI: python -m pipeline.metadata.fetch_new_covers --since 2025-08-13 [--until DATE] [--limit N] [--dry-run]
-def list_new_items(since: str, until: str | None, cursor_file: Path) -> Iterator[dict]   # Internet Archive scrape API, q='collection:coverartarchive AND (addeddate:[SINCE TO UNTIL] OR updatedate:[SINCE TO UNTIL])', fields identifier,addeddate,updatedate; cursor saved after each page; yields {mbid, added, updated}
-def front_image_id(mbid: str) -> str | None                      # GET https://coverartarchive.org/release/<mbid>; same priority as parallel_fetch_cover_art_urls
-def download_front(mbid: str, cover_id: str, out_dir: Path) -> Path   # <out_dir>/<mbid[:2]>/<mbid>.jpg (500 px); skip if present
-def fetch_release(mbid: str, session, last_call: float) -> dict  # MB WS /ws/2/release/<mbid>?inc=artist-credits+release-groups&fmt=json ; sleeps to keep >= 1.0 s between calls; User-Agent "RecordScan/0.1 (gsajith@umich.edu)"; backoff 503 -> 5 s doubling to 60 s
-def slim(release_json: dict) -> dict                              # same keys as slim_file.py plus "release_group" and "cover_id"
-def main(...) -> None                                             # writes delta/covers/<prefix>/<mbid>.jpg, delta/releases/<date>.jsonl, delta/artists/<date>.jsonl, delta/state.json (cursor, counts); resumable; --dry-run prints the item count only
+# slim_file.py   CLI: python -m pipeline.metadata.slim_file DUMP/release.tar.xz --date YYYY-MM-DD
+def slim_record(obj: dict) -> dict | None   # {"release": 2025 slim keys + release_group, "artists": {...}}; None without cover art
+def slim_dump(dump: Path, releases_out: Path, artists_out: Path) -> int   # streams mbdump/release through tar; META_DIR/releases-<date>.jsonl, artists-<date>.json
+# catalog.py
+@dataclass(frozen=True)
+class Cover: mbid: str; cover_id: str; file: str; primary: bool   # file relative to IMAGE_ROOT
+Catalog.covers(mbid) -> list[Cover]                                 # primary first
+# fetch_new_covers.py   CLI: python -m pipeline.metadata.fetch_new_covers --date D --since PREV [--limit N] [--workers 16] [--dry-run]
+def plan_covers(previous, releases, cover_release, new_fronts, fronts) -> Plan   # keep / download / lookup / dropped, no network; a new front replaces a non-front primary
+def best_front(caa_json: dict) -> str | None                             # 2025 priority: approved front, pending front, any approved; needs a 500 px thumbnail
+def get_with_backoff(session, url, sleep, tries=7) -> Response | None    # None on 404; 5 s doubling to 60 s on 429, 5xx, dropped connections
+def run(date, since, session, limit, dry_run, workers, sleep) -> Counts  # reads META_DIR/covers-<since>.jsonl (a fixed snapshot); writes images to the drive, fetched-<date>.jsonl (resume log), covers-<date>.jsonl
+# legacy/seed_covers_2025.py   one-off: covers-2025-08-13.jsonl from the 2025 slim, leaving out the 453 failed downloads missing from the drive
 ```
-Expect a backlog in the hundreds of thousands; at one MusicBrainz call per second that is days of background running, which is fine. Print a throughput line every 1,000 items.
+Commands, run from the repo root with the drive mounted:
+```
+D=~/Projects/record-scan-data/musicbrainz-dump-2026-10-24
+curl -C - -o $D/release.tar.xz https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/20261024-001001/release.tar.xz
+curl -o $D/mbdump-cover-art-archive.tar.bz2 https://data.metabrainz.org/pub/musicbrainz/data/fullexport/20261024-102842/mbdump-cover-art-archive.tar.bz2
+tar -xjf $D/mbdump-cover-art-archive.tar.bz2 -C $D mbdump
+python -m pipeline.legacy.seed_covers_2025                                        # first update only
+python -m pipeline.metadata.slim_file $D/release.tar.xz --date 2026-10-24        # about 40 min
+python -m pipeline.metadata.fetch_new_covers --date 2026-10-24 --since 2025-08-13 --dry-run
+python -m pipeline.metadata.fetch_new_covers --date 2026-10-24 --since 2025-08-13 --limit 500
+python -m pipeline.metadata.build_catalog_db
+nohup caffeinate -i python -m pipeline.metadata.fetch_new_covers --date 2026-10-24 --since 2025-08-13 > $D/fetch.log 2>&1 &
+python -m pipeline.metadata.build_catalog_db                                      # again when the full run ends
+```
+The next update passes the new dump's date as `--date` and this one's as `--since`, and so starts from this update's `covers-<date>.jsonl`. Rebuilding the catalog mid-run is safe: the fetcher never reads it.
 
-- [ ] Step 1: Failing tests with recorded fixture JSON (generated by conftest, not fetched): `test_scrape_cursor_resume` (two fake pages, cursor file written between them), `test_front_image_priority`, `test_slim_keeps_release_group`, `test_rate_limit_sleeps` (monkeypatched clock, asserts >= 1.0 s spacing), `test_backoff_on_503`.
-- [ ] Step 2: Run, FAIL. Step 3: Implement. Step 4: tests pass. Live: `--dry-run` prints the real backlog count (record it in `docs/results/<date>-catalog-delta.md`); then `--limit 500` end to end; then start the full run under `nohup`. Rebuild the catalog with `build_catalog_db` once the first batch lands and confirm `release_group` is populated for delta rows.
-- [ ] Step 5: Commit `feat(pipeline): fetch covers and metadata added since the dump from the cover art archive`.
+- [x] Step 1: Failing tests on generated fixtures: `slim_record` keeps the release group; `best_front` priority; `plan_covers` keeps old covers still upstream, adds new fronts, drops deleted ones, promotes an extra when the primary is gone, and looks up new releases; `get` backs off on 503, 429 and dropped connections; `run` resumes after a `--limit` run and after a crash mid-write without repeating a request, never overwrites or deletes a 2025 file, stops when the drive goes away, and `--dry-run` makes no requests; `covers_after` keeps one primary per release; `slim_dump` skips a malformed line; the catalog build takes release groups and covers.
+- [x] Step 2: Run, FAIL. Step 3: Implement. Step 4: tests pass.
+- [x] Step 5: Live: `--dry-run` backlog in `docs/results/2026-10-25-catalog-update.md`; `--limit 500` end to end; catalog rebuilt with `release_group` filled; full run started under `nohup`.
+- [x] Step 6: Commit `feat(pipeline): update covers and metadata from a fresh musicbrainz dump`.
 
 ### Task 7: run the frozen sweep (Step 2) and the crop study (Step 3)
 
@@ -362,7 +384,7 @@ Each later task is written at full detail only once the measurements it depends 
 - **Task 15, Step 9: student distillation** against precomputed teacher targets. Ship the smallest student within 2 points and under 30 ms p95.
 - **Task 16, Step 10: index compression study** (faiss IVF-PQ64, PQ32, OPQ, binary + rescore). Gate: PQ64 within 2 points of exact search ships on-device as an asset pack; otherwise stay hybrid.
 - **Task 17, Step 11: lock calibration and app integration.** 99% lock precision, three agreeing frames with scores fused across frames (a crate shot gets several partial views as the phone moves, and the fused score beats any single frame), OCR fallback for low-margin and crate results (the visible top of a sleeve usually carries the artist and title), ship bar per the report.
-- **Monthly job:** Task 6 rerun plus catalog rebuild plus incremental embedding of `delta/` with the shipped teacher; annual dump re-slim adding `release_group`.
+- **Catalog update job:** Task 6 rerun on a newer dump plus catalog rebuild plus incremental embedding of the new `covers-<date>.jsonl` entries with the shipped teacher.
 
 ---
 
@@ -374,7 +396,10 @@ Nothing here is deleted by an agent. Each row names the task whose completion ma
 |---|---|---|---|
 | `metadata/uuid_to_metadata.json` | 840 MB | Task 1 (catalog.sqlite built, tests pass) | `Catalog` replaces it; regenerable from `slim_releases_with_covers.json` in a minute anyway |
 | `_archive-album-annotator-2025-11/` | about 28 MB after cleanup | Task 3 (labeler merged) | the GitHub repo gsajith/album-annotator is archived and holds the same history |
-| `_archive-mbdump-2025-11/` | about 1.1 GB after cleanup, almost all `.git` | Task 6 (delta fetch merged) | the scripts are in `pipeline/legacy/`; only the August 2025 commit history remains here |
+| `_archive-mbdump-2025-11/` | about 1.1 GB after cleanup, almost all `.git` | Task 6 (catalog update merged) | the scripts are in `pipeline/legacy/`; only the August 2025 commit history remains here |
+| `musicbrainz-dump-2025-08-13/` | 17 GB | Task 6 (catalog rebuilt from the 2026-10-24 slim) | superseded by the 2026-10-24 dump |
+| `metadata/slim_releases.json`, `slim_releases_with_covers.json`, `release_slim_artists.json`, `existing_files.json`, `failed_cover_fetches.json`, `failed_cover_id_fetches.json` | 1.6 GB | Task 6 (full run finished and catalog rebuilt) | the 2025 slim and fetch state; `covers-2025-08-13.jsonl` carries every 2025 cover forward and already leaves out the failed downloads |
+| `musicbrainz-dump-2026-10-24/release.tar.xz` | 22 GB | Task 6 (full run finished) | `releases-2026-10-24.jsonl` holds everything kept from it; download the next dump for the next update |
 | `~/.cache/clip` (1.2 GB), `~/.cache/torch/hub/checkpoints` (1.2 GB), HF `models--openai--clip-vit-base-patch32` (1.1 GB) | 3.5 GB | now | the OpenAI `clip` package, DINOv2 hub weights and transformers CLIP are not used by the new retrieval core |
 | HF `models--timm--vit_base_patch32_clip_224.openai` | 577 MB | keep | open_clip loads the `clip-vit-b-32` baseline from this cache |
 

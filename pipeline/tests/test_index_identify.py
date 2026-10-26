@@ -41,6 +41,15 @@ def unit(v):
     return v / np.linalg.norm(v)
 
 
+def build_catalog(tmp_path, releases, artists):
+    """A catalog.sqlite from releases in the slim shape, with no covers."""
+    (tmp_path / "releases.jsonl").write_text("".join(json.dumps(r) + "\n" for r in releases))
+    (tmp_path / "artists.json").write_text(json.dumps(artists))
+    (tmp_path / "covers.jsonl").write_text("")
+    build(tmp_path / "releases.jsonl", tmp_path / "artists.json", tmp_path / "covers.jsonl", tmp_path / "catalog.sqlite")
+    return Catalog(tmp_path / "catalog.sqlite")
+
+
 @pytest.fixture
 def catalog(tmp_path):
     releases = [
@@ -50,10 +59,7 @@ def catalog(tmp_path):
         {"title": "Homogenic", "id": HOMOGENIC, "artist_ids": [BJORK]},
     ]
     artists = {BEATLES: {"name": "Beatles, The"}, BJORK: {"name": "Björk"}}
-    (tmp_path / "releases.json").write_text(json.dumps(releases))
-    (tmp_path / "artists.json").write_text(json.dumps(artists))
-    build(tmp_path / "releases.json", tmp_path / "artists.json", tmp_path / "catalog.sqlite", delta_dir=None)
-    return Catalog(tmp_path / "catalog.sqlite")
+    return build_catalog(tmp_path, releases, artists)
 
 
 @pytest.fixture
@@ -131,12 +137,10 @@ def test_identify_widens_search_when_one_group_fills_the_neighbours(catalog, tmp
 def test_identify_keeps_albums_apart_when_titles_normalize_to_nothing(tmp_path):
     # "+" and "÷" both normalize to an empty title, so their album keys collide
     ed, plus, divide = "44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666"
-    (tmp_path / "releases.json").write_text(json.dumps([
+    build_catalog(tmp_path, [
         {"title": "+", "id": plus, "artist_ids": [ed]},
         {"title": "÷", "id": divide, "artist_ids": [ed]},
-    ]))
-    (tmp_path / "artists.json").write_text(json.dumps({ed: {"name": "Ed Sheeran"}}))
-    build(tmp_path / "releases.json", tmp_path / "artists.json", tmp_path / "catalog.sqlite", delta_dir=None)
+    ], {ed: {"name": "Ed Sheeran"}})
     np.savez(tmp_path / "00.npz", uuids=np.array([plus, divide], dtype="U36"),
              embs=np.array([E0, unit([0.9, 0.44, 0, 0])], dtype=np.float16))
     build_index([tmp_path / "00.npz"], 4, tmp_path, M=16, ef_construction=100)

@@ -7,7 +7,8 @@ imports and paths may no longer match the rest of `pipeline/`.
 ## August 2025 data pipeline
 
 The run started with `pipeline/metadata/slim_file.py`, which slimmed the MusicBrainz dump
-and still lives in `metadata/` for the annual re-slim. The four scripts below ran after it.
+and still lives in `metadata/`, where catalog updates re-slim newer dumps with it. The four
+scripts below ran after it.
 
 - `parallel_fetch_cover_art_urls.py` queried the Cover Art Archive for each release and
   recorded its front cover id.

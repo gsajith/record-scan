@@ -24,7 +24,6 @@ GOLD_DIR = DATA_DIR / "gold"
 DETECTOR_DIR = DATA_DIR / "detector"
 WILD_DIR = DATA_DIR / "wild"
 GALLERY256_DIR = DATA_DIR / "gallery256"
-DELTA_DIR = DATA_DIR / "delta"
 EXPORTS_DIR = DATA_DIR / "exports"
 LIGHTBANK_DIR = DATA_DIR / "lightbank"
 CATALOG_DB = META_DIR / "catalog.sqlite"
@@ -51,6 +50,8 @@ def require_image_root() -> Path:
 
 
 def image_path(uuid: str) -> Path:
+    """Where the 2025 download put a release's cover. Later covers have other names and some 2025
+    ones were dropped: use Catalog.covers() for a release's current covers."""
     return IMAGE_ROOT / uuid[:2] / f"{uuid}.jpg"
 
 

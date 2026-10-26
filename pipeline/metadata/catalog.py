@@ -20,6 +20,16 @@ class Release:
     release_group: str | None
 
 
+@dataclass(frozen=True, slots=True)  # slots: millions of these are held at once
+class Cover:
+    """One cover image on the drive. A release has one primary cover and maybe extra fronts."""
+
+    mbid: str
+    cover_id: str
+    file: str  # relative to IMAGE_ROOT: "<mbid[:2]>/<mbid>.jpg" from 2025, "<mbid[:2]>/<mbid>-<cover_id>.jpg" since
+    primary: bool
+
+
 _APOSTROPHES = "'’ʼ`"
 _TRAILING_THE = re.compile(r",\s*the$")
 
@@ -88,6 +98,14 @@ class Catalog:
             (match, limit),
         ).fetchall()
         return self._releases(rows)
+
+    def covers(self, mbid: str) -> list[Cover]:
+        """The release's cover images, primary first."""
+        rows = self._db.execute(
+            "SELECT mbid, cover_id, file, is_primary FROM covers WHERE mbid = ? ORDER BY is_primary DESC, rowid",
+            (mbid,),
+        )
+        return [Cover(m, c, f, bool(p)) for m, c, f, p in rows]
 
     def album_key(self, mbid: str) -> str:
         """normalize(title) + "|" + normalize(primary artist). Raises KeyError for an unknown mbid."""
