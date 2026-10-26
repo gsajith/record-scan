@@ -2,15 +2,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Release } from "@/lib/catalog";
 import { hotkeyAction, KIND_KEYS, TAG_KEYS } from "@/lib/hotkeys";
-import { KINDS, TAGS, type Kind, type SetName, type Split, type Tag } from "@/lib/labels";
+import { KINDS, LICENSES, SETS, TAGS, type Kind, type License, type SetName, type Split, type Tag } from "@/lib/labels";
 import type { QueueItem } from "@/lib/queue";
 import styles from "./page.module.css";
 
 type Result = Release & { thumb: string };
 type Counts = Record<SetName, Record<Split, number>>;
-
-// Gold only for now; the wild set, with its source and license fields, comes next
-const SET = "gold";
 
 // Browsers often give HEIC files no type, so the extension counts too
 const IMAGE_EXT = /\.(heic|heif)$/i;
@@ -19,17 +16,23 @@ function firstImage(files: FileList | undefined): File | undefined {
   return Array.from(files ?? []).find((f) => f.type.startsWith("image/") || IMAGE_EXT.test(f.name));
 }
 
+/** The image address a browser hands over when you drag a picture out of a web page. */
+function droppedUrl(data: DataTransfer): string | undefined {
+  const line = data.getData("text/uri-list").split(/\r?\n/).find((l) => l && !l.startsWith("#"));
+  return line && /^https?:\/\//.test(line) ? line : undefined;
+}
+
 function errorText(body: unknown, fallback: string): string {
   return typeof body === "object" && body !== null && "error" in body ? String(body.error) : fallback;
 }
 
 type QueueResponse = { next: QueueItem | null; remaining: number; counts: Counts };
 
-async function fetchQueue(skip: string[]): Promise<QueueResponse> {
+async function fetchQueue(set: SetName, skip: string[]): Promise<QueueResponse> {
   const res = await fetch("/api/queue", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ set: SET, skip }),
+    body: JSON.stringify({ set, skip }),
   });
   const body = await res.json();
   if (!res.ok) throw new Error(errorText(body, "Couldn't load the next photo."));
@@ -38,10 +41,14 @@ async function fetchQueue(skip: string[]): Promise<QueueResponse> {
 
 /** Focus is in a field where letters and Enter mean typing, not shortcuts. */
 function isTyping(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && target.matches('input[type="search"], input[type="text"], textarea, select');
+  return (
+    target instanceof HTMLElement &&
+    target.matches('input[type="search"], input[type="text"], input[type="url"], textarea, select')
+  );
 }
 
 export default function LabelerPage() {
+  const [set, setSet] = useState<SetName>("gold");
   const [photo, setPhoto] = useState<QueueItem | null>(null);
   const [remaining, setRemaining] = useState(0);
   const [counts, setCounts] = useState<Counts | null>(null);
@@ -59,6 +66,11 @@ export default function LabelerPage() {
   const [kind, setKind] = useState<Kind>("positive");
   const [tags, setTags] = useState<Tag[]>([]);
   const [notes, setNotes] = useState("");
+  // Wild photos only (D9): the page a photo came from and its license. Gold is always "own".
+  // The license carries over between photos (a batch is often from one site); the source
+  // carries over like the album, within one video.
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [license, setLicense] = useState<License | "">("");
 
   const searchRef = useRef<HTMLInputElement>(null);
   const lastVideo = useRef<string | null>(null);
@@ -91,8 +103,16 @@ export default function LabelerPage() {
       clearPerPhoto();
       const video = body.next?.video ?? null;
       // Pasted photos and the first frame of each video are a new record
-      if (body.next && (video === null || video !== lastVideo.current)) startNewRecord();
+      if (body.next && (video === null || video !== lastVideo.current)) {
+        startNewRecord();
+        setSourceUrl("");
+      }
       lastVideo.current = video;
+      // A wild photo added earlier brings back the source and license it was added with
+      if (body.next?.source) {
+        setSourceUrl(body.next.source.url);
+        setLicense(body.next.source.license);
+      }
     },
     [clearPerPhoto, startNewRecord],
   );
@@ -102,12 +122,12 @@ export default function LabelerPage() {
     (skip: string[]) => {
       const id = ++loadId.current;
       const current = () => id === loadId.current;
-      return fetchQueue(skip)
+      return fetchQueue(set, skip)
         .then((body) => current() && applyQueue(body))
         .catch((e: Error) => current() && setError(e.message))
         .finally(() => current() && setBusy(null));
     },
-    [applyQueue],
+    [applyQueue, set],
   );
 
   useEffect(() => {
@@ -118,44 +138,80 @@ export default function LabelerPage() {
     if (focusSearchTick > 0) searchRef.current?.focus();
   }, [focusSearchTick]);
 
-  const ingest = useCallback(
-    async (file: File) => {
-      loadId.current += 1;
-      setBusy("ingest");
-      setError(null);
-      setStatus(null);
-      const form = new FormData();
-      form.append("set", SET);
-      form.append("file", file);
-      try {
-        const res = await fetch("/api/ingest", { method: "POST", body: form });
-        const body = await res.json();
-        if (!res.ok) throw new Error(errorText(body, "Couldn't save that photo."));
-        setPhoto({ sha1: body.sha1, file: body.file, video: null });
-        clearPerPhoto();
-        startNewRecord();
-        lastVideo.current = null;
-      } catch (e) {
-        setError((e as Error).message);
-      } finally {
-        setBusy(null);
+  /** Add a file, or (wild only) an image address. `pageUrl` prefills an empty source field. */
+  async function ingest(input: File | string, pageUrl?: string) {
+    let source: { url: string; license: License } | null = null;
+    if (set === "wild") {
+      const url = sourceUrl || pageUrl || "";
+      if (url !== sourceUrl) setSourceUrl(url);
+      if (!url || !license) {
+        setError(`Add ${url ? "" : "the page the photo came from and "}a license first, then add the photo again.`);
+        return;
       }
-    },
-    [clearPerPhoto, startNewRecord],
-  );
+      source = { url, license };
+    }
+    loadId.current += 1;
+    setBusy("ingest");
+    setError(null);
+    setStatus(null);
+    let request: RequestInit;
+    if (typeof input === "string") {
+      request = {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ set, url: input, source_url: source?.url, license: source?.license }),
+      };
+    } else {
+      const form = new FormData();
+      form.append("set", set);
+      form.append("file", input);
+      if (source) {
+        form.append("source_url", source.url);
+        form.append("license", source.license);
+      }
+      request = { body: form };
+    }
+    try {
+      const res = await fetch("/api/ingest", { method: "POST", ...request });
+      const body = await res.json();
+      if (!res.ok) throw new Error(errorText(body, "Couldn't save that photo."));
+      setPhoto({ sha1: body.sha1, file: body.file, video: null, source });
+      clearPerPhoto();
+      startNewRecord();
+      lastVideo.current = null;
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
 
-  // Paste an image from anywhere on the page
+  // Paste an image from anywhere on the page, or (wild) an image address while not typing.
+  // Re-bound each render so it sees the current set, source and license.
   useEffect(() => {
     function onPaste(e: ClipboardEvent) {
       const file = firstImage(e.clipboardData?.files);
+      const text = e.clipboardData?.getData("text/plain").trim() ?? "";
       if (file) {
         e.preventDefault();
         ingest(file);
+      } else if (set === "wild" && !isTyping(e.target) && /^https?:\/\/\S+$/.test(text)) {
+        e.preventDefault();
+        ingest(text, text);
       }
     }
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [ingest]);
+  });
+
+  function switchSet(next: SetName) {
+    if (next === set || busy !== null) return;
+    setBusy("load");
+    setSkipped([]);
+    setStatus(null);
+    setError(null);
+    lastVideo.current = null;
+    setSet(next); // the load effect fetches the new set's queue
+  }
 
   // Search as you type, a beat after the last key
   useEffect(() => {
@@ -185,7 +241,8 @@ export default function LabelerPage() {
   }, [active]);
 
   const needsAlbum = kind === "positive" && picked === null;
-  const canSave = photo !== null && busy === null && !needsAlbum;
+  const needsSource = set === "wild" && (!sourceUrl || !license);
+  const canSave = photo !== null && busy === null && !needsAlbum && !needsSource;
 
   async function save() {
     if (!photo || !canSave) return;
@@ -198,15 +255,15 @@ export default function LabelerPage() {
       kind,
       mbid: kind === "positive" ? picked?.mbid ?? null : null,
       tags,
-      source_url: null,
-      license: "own",
+      source_url: set === "wild" ? sourceUrl : null,
+      license: set === "wild" ? license : "own",
       notes,
     };
     try {
       const res = await fetch("/api/label", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ set: SET, label }),
+        body: JSON.stringify({ set, label }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(errorText(body, "Couldn't save the label."));
@@ -275,6 +332,7 @@ export default function LabelerPage() {
   else if (error) emptyText = error;
   else if (busy === "ingest") emptyText = "Saving photo…";
   else if (remaining > 0) emptyText += "You skipped the rest. Reload the page to see them again.";
+  else if (set === "wild") emptyText += "Nothing left in the inbox. Paste or drop a photo, or an image link.";
   else emptyText += "Nothing left in the inbox. Paste a photo, or drop one here.";
 
   return (
@@ -284,13 +342,15 @@ export default function LabelerPage() {
       onDrop={(e) => {
         e.preventDefault();
         const file = firstImage(e.dataTransfer.files);
-        if (file) ingest(file);
+        const url = droppedUrl(e.dataTransfer);
+        if (file) ingest(file, url);
+        else if (url && set === "wild") ingest(url, url);
       }}
     >
       <section className={styles.photo} aria-label="Photo">
         {photo ? (
           // eslint-disable-next-line @next/next/no-img-element -- a local file served by /api/image, no optimizer needed
-          <img src={`/api/image/${SET}/${photo.sha1}`} alt="Photo being labeled" />
+          <img src={`/api/image/${set}/${photo.sha1}`} alt="Photo being labeled" />
         ) : (
           <div className={styles.empty}>
             <p>{emptyText}</p>
@@ -313,7 +373,22 @@ export default function LabelerPage() {
 
       <section className={styles.panel} aria-label="Label">
         <div className={styles.strip}>
-          <h1 className={styles.heading}>Gold set</h1>
+          <h1 className={styles.visuallyHidden}>Labeler</h1>
+          <div className={styles.sets} role="radiogroup" aria-label="Photo set">
+            {SETS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                role="radio"
+                aria-checked={s === set}
+                className={s === set ? styles.setOn : styles.set}
+                disabled={busy !== null && s !== set}
+                onClick={() => switchSet(s)}
+              >
+                {s === "gold" ? "Gold" : "Wild"}
+              </button>
+            ))}
+          </div>
           {counts && (
             <p className={styles.hint}>
               Gold {counts.gold.eval} eval · Wild {counts.wild.eval} eval, {counts.wild.sim} sim · {remaining} to label
@@ -323,6 +398,31 @@ export default function LabelerPage() {
             {photo && status}
           </p>
         </div>
+
+        {set === "wild" && (
+          <div className={styles.source}>
+            <label>
+              Source page
+              <input
+                type="url"
+                placeholder="https://"
+                value={sourceUrl}
+                onChange={(e) => setSourceUrl(e.target.value.trim())}
+              />
+            </label>
+            <label>
+              License
+              <select value={license} onChange={(e) => setLicense(e.target.value as License | "")}>
+                <option value="">Choose…</option>
+                {LICENSES.filter((l) => l !== "own").map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
 
         <fieldset className={styles.kinds} disabled={!photo}>
           <legend>Kind</legend>

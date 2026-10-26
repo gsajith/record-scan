@@ -1,8 +1,8 @@
 // What to label next: photos without a label line, then frames waiting in the inbox.
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { SHA1_RE } from "./labels";
-import { ingestImage, NotAnImageError, photoFile, readLabels } from "./store";
+import { SHA1_RE, type License } from "./labels";
+import { appendSource, ingestImage, NotAnImageError, photoFile, readLabels, readSources } from "./store";
 
 // Frames from pipeline/gold/sample_frames.py are JPEGs; dropped-in photos may be anything here
 const IMAGE_FILE = /\.(jpe?g|png|heic|heif)$/i;
@@ -10,37 +10,19 @@ const IMAGE_FILE = /\.(jpe?g|png|heic|heif)$/i;
 /**
  * video: the recording an inbox frame came from ("abbey road" for "abbey road-03.jpg", the
  * sampler's <video-stem>-NN.jpg naming), so the page can tell when the record changes.
- * Null for a photo that was pasted or dropped in.
+ * Null for a photo that was pasted or dropped in. source: a wild photo's web page and license,
+ * as given when it was added, so labeling it later (after a reload) still has them.
  */
-export type QueueItem = { sha1: string; file: string; video: string | null };
+export type QueueItem = {
+  sha1: string;
+  file: string;
+  video: string | null;
+  source: { url: string; license: License } | null;
+};
 
 // The sampler writes exactly two digits; "scan-1.jpg" dropped in by hand is its own photo
 function videoOf(frameName: string): string {
   return frameName.replace(/\.[^.]+$/, "").replace(/-\d{2}$/, "");
-}
-
-// Which inbox frame each photo came from, one { sha1, frame } line per frame taken, so any
-// later request (another tab, a page reload) still knows a photo's video
-const SOURCES = join("inbox", "done", "sources.jsonl");
-
-function readSources(setDir: string): Map<string, string> {
-  let text: string;
-  try {
-    text = readFileSync(join(setDir, SOURCES), "utf8");
-  } catch (e) {
-    if (isMissing(e)) return new Map();
-    throw e;
-  }
-  const sources = new Map<string, string>();
-  for (const line of text.split("\n")) {
-    try {
-      const { sha1, frame } = JSON.parse(line) as { sha1: unknown; frame: unknown };
-      if (typeof sha1 === "string" && typeof frame === "string") sources.set(sha1, frame);
-    } catch {
-      // only a hint for the page; a torn line just means that photo starts a new record
-    }
-  }
-  return sources;
 }
 
 function isMissing(e: unknown): boolean {
@@ -88,7 +70,7 @@ async function takeFromInbox(setDir: string, name: string): Promise<void> {
     dest = "unreadable"; // move it aside so one bad file can't block the queue
   }
   mkdirSync(join(inbox, dest), { recursive: true });
-  if (sha1) appendFileSync(join(setDir, SOURCES), JSON.stringify({ sha1, frame: name }) + "\n");
+  if (sha1) appendSource(setDir, { sha1, frame: name });
   try {
     renameSync(join(inbox, name), join(inbox, dest, name));
   } catch (e) {
@@ -113,8 +95,9 @@ export async function nextInQueue(
     const remaining = pending.length + inbox.length;
     const sha1 = pending.find((p) => !skipped.has(p));
     if (sha1) {
-      const frame = readSources(setDir).get(sha1);
-      return { next: { sha1, file: photoFile(sha1), video: frame ? videoOf(frame) : null }, remaining };
+      const { frame, source_url, license } = readSources(setDir).get(sha1) ?? {};
+      const source = source_url && license ? { url: source_url, license } : null;
+      return { next: { sha1, file: photoFile(sha1), video: frame ? videoOf(frame) : null, source }, remaining };
     }
     if (inbox.length === 0) return { next: null, remaining };
     await takeFromInbox(setDir, inbox[0]);
