@@ -93,9 +93,11 @@ export async function ingestWild(
   const jpeg = await decodeToJpeg(input);
   const phash = await fingerprint(jpeg);
   for (const other of sources.values()) {
-    if (other.phash && isNearDuplicate(phash, other.phash)) throw new NearDuplicateError(other.sha1);
+    // A fingerprint whose photo never got written (a crash or full disk mid-save) is stale
+    if (!other.phash || !existsSync(join(setDir, photoFile(other.sha1)))) continue;
+    if (isNearDuplicate(phash, other.phash)) throw new NearDuplicateError(other.sha1);
   }
-  // Fingerprint first: a crash after it leaves a harmless line, never a photo the check can't see
+  // Fingerprint first, so a saved photo is never missing from the check; a stale line is skipped above
   appendSource(setDir, { sha1, phash, ...(sourceUrl ? { source_url: sourceUrl } : {}) });
   writePhoto(setDir, sha1, jpeg);
   return { sha1, file: photoFile(sha1), sourceUrl };

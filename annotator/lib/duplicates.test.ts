@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -40,5 +40,14 @@ describe("ingestWild", () => {
     const setDir = wildDir();
     await ingestWild(setDir, await patterned(1), source);
     await expect(ingestWild(setDir, await patterned(2), source)).resolves.toMatchObject({ file: expect.any(String) });
+  });
+
+  it("ignores a fingerprint whose photo was never saved", async () => {
+    const setDir = wildDir();
+    const original = await patterned(3);
+    const first = await ingestWild(setDir, original, source);
+    rmSync(join(setDir, first.file)); // as if the photo write had failed after the fingerprint line
+    const copy = await sharp(original).resize(280).jpeg({ quality: 70 }).toBuffer();
+    await expect(ingestWild(setDir, copy, source)).resolves.toMatchObject({ file: expect.any(String) });
   });
 });
