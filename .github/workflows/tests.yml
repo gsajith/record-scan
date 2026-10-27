@@ -1,0 +1,46 @@
+name: Tests
+
+# The fast pipeline tests and the labeler's lint, typecheck and tests, on every PR and on main.
+# Slow tests (model downloads) and MPS checks run on the Mac only.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pipeline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # CPU wheels first: torch from PyPI on Linux pulls in gigabytes of CUDA libraries, and
+      # 2.8.0+cpu satisfies the lock's torch==2.8.0
+      - run: uv venv && uv pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0 torchvision==0.23.0
+      - run: uv pip install -r requirements.lock
+      - run: .venv/bin/python -m pytest -q -m "not slow"
+
+  annotator:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: annotator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: annotator/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm test
