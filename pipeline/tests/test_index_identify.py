@@ -15,6 +15,7 @@ ABBEY = "11111111-1111-4111-8111-111111111111"
 ABBEY_REISSUE = "11111111-1111-4111-8111-222222222222"
 DEBUT = "22222222-2222-4222-8222-222222222222"
 HOMOGENIC = "33333333-3333-4333-8333-333333333333"
+RG_ABBEY = "88888888-8888-4888-8888-888888888880"
 
 E0, E2 = [1, 0, 0, 0], [0, 0, 1, 0]
 
@@ -53,8 +54,9 @@ def build_catalog(tmp_path, releases, artists):
 @pytest.fixture
 def catalog(tmp_path):
     releases = [
-        {"title": "Abbey Road", "id": ABBEY, "artist_ids": [BEATLES]},
-        {"title": "Abbey Road", "id": ABBEY_REISSUE, "artist_ids": [BEATLES]},
+        {"title": "Abbey Road", "id": ABBEY, "artist_ids": [BEATLES], "release_group": RG_ABBEY},
+        # Another title, same release group: still Abbey Road
+        {"title": "Abbey Road (2019 Mix)", "id": ABBEY_REISSUE, "artist_ids": [BEATLES], "release_group": RG_ABBEY},
         {"title": "Debut", "id": DEBUT, "artist_ids": [BJORK]},
         {"title": "Homogenic", "id": HOMOGENIC, "artist_ids": [BJORK]},
     ]
@@ -86,7 +88,7 @@ def test_build_index_and_identify_roundtrip(catalog, index_dir):
 
     matches = Identifier(FixedEmbedder(E0), index_dir, catalog).identify(photo, k=3, views=1)
 
-    # The reissue is another release of Abbey Road, so it collapses into the first match
+    # The 2019 mix is in Abbey Road's release group, so it collapses into the first match
     assert [m.mbid for m in matches] == [ABBEY, DEBUT, HOMOGENIC]
     assert matches[0].title == "Abbey Road"
     assert matches[0].artists == ("Beatles, The",)
@@ -134,8 +136,8 @@ def test_identify_widens_search_when_one_group_fills_the_neighbours(catalog, tmp
     assert [m.mbid for m in matches][1:] == [DEBUT]
 
 
-def test_identify_keeps_albums_apart_when_titles_normalize_to_nothing(tmp_path):
-    # "+" and "÷" both normalize to an empty title, so their album keys collide
+def test_identify_keeps_albums_without_a_release_group_apart(tmp_path):
+    # "+" and "÷" have no release group here, so each stands alone
     ed, plus, divide = "44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666"
     build_catalog(tmp_path, [
         {"title": "+", "id": plus, "artist_ids": [ed]},
@@ -150,3 +152,21 @@ def test_identify_keeps_albums_apart_when_titles_normalize_to_nothing(tmp_path):
     )
 
     assert [m.title for m in matches] == ["+", "÷"]
+
+
+def test_identify_keeps_same_titled_albums_apart(tmp_path):
+    # Weezer's Blue and Green albums are both titled "Weezer" but are different release groups
+    weezer, blue, green = "77777777-7777-4777-8777-777777777770", "77777777-7777-4777-8777-777777777771", "77777777-7777-4777-8777-777777777772"
+    build_catalog(tmp_path, [
+        {"title": "Weezer", "id": blue, "artist_ids": [weezer], "release_group": "88888888-8888-4888-8888-888888888881"},
+        {"title": "Weezer", "id": green, "artist_ids": [weezer], "release_group": "88888888-8888-4888-8888-888888888882"},
+    ], {weezer: {"name": "Weezer"}})
+    np.savez(tmp_path / "00.npz", uuids=np.array([blue, green], dtype="U36"),
+             embs=np.array([E0, unit([0.9, 0.44, 0, 0])], dtype=np.float16))
+    build_index([tmp_path / "00.npz"], 4, tmp_path, M=16, ef_construction=100)
+
+    matches = Identifier(FixedEmbedder(E0), tmp_path, Catalog(tmp_path / "catalog.sqlite")).identify(
+        Image.new("RGB", (8, 8)), k=2, views=1
+    )
+
+    assert [m.mbid for m in matches] == [blue, green]
