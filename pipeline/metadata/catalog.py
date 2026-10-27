@@ -107,6 +107,12 @@ class Catalog:
         )
         return [Cover(m, c, f, bool(p)) for m, c, f, p in rows]
 
+    def cover_files(self, prefix: str) -> list[str]:
+        """Every cover file in one prefix folder of the drive ("00" to "ff"), sorted by file name."""
+        # A file sits in its mbid's prefix folder; "~" sorts after every hex digit and "-", so the range uses the mbid index
+        rows = self._db.execute("SELECT file FROM covers WHERE mbid >= ? AND mbid < ?", (prefix, prefix + "~"))
+        return sorted(f for (f,) in rows)
+
     def album_key(self, mbid: str) -> str:
         """normalize(title) + "|" + normalize(primary artist). Raises KeyError for an unknown mbid."""
         row = self._db.execute("SELECT album_key FROM releases WHERE mbid = ?", (mbid,)).fetchone()
