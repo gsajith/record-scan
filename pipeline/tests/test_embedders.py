@@ -1,6 +1,7 @@
 import copy
 import dataclasses
 import re
+import types
 
 import numpy as np
 import pytest
@@ -155,7 +156,14 @@ def test_exact_layer_norms_refuses_a_layer_norm_it_cannot_replace():
         exact_layer_norms(torch.nn.LayerNorm((4, 4)))
 
 
-WEIGHTS = "timm/vit_pe_core_small_patch16_384.fb@255fa76e26fdf8daa47e0d607da46b7051879045 timm-1.0.30"
+PE = BACKBONES["pe-core-s16"]
+
+
+def loader(version: str) -> types.ModuleType:
+    """A stand-in for the library that builds the model, such as timm."""
+    module = types.ModuleType("timm")
+    module.__version__ = version
+    return module
 
 
 def test_embedder_signature_ignores_memory_addresses():
@@ -163,19 +171,19 @@ def test_embedder_signature_ignores_memory_addresses():
     def to_rgb(img):
         return img
 
-    first = embedder_signature("m", 224, f"Compose(Lambda({to_rgb!r}))", WEIGHTS)
-    other_address = embedder_signature("m", 224, f"Compose(Lambda({to_rgb!r}))".replace(hex(id(to_rgb)), "0x1234abcd"), WEIGHTS)
+    timm = loader("1.0.30")
+    first = embedder_signature("m", 224, f"Compose(Lambda({to_rgb!r}))", PE, timm)
+    other_address = embedder_signature("m", 224, f"Compose(Lambda({to_rgb!r}))".replace(hex(id(to_rgb)), "0x1234abcd"), PE, timm)
 
     assert first == other_address
     assert first.startswith("m-224px-")
     # A real preprocessing change at the same size gets a new signature
-    assert embedder_signature("m", 224, "Normalize(mean=0.5)", WEIGHTS) != embedder_signature("m", 224, "Normalize(mean=0.4)", WEIGHTS)
+    assert embedder_signature("m", 224, "Normalize(mean=0.5)", PE, timm) != embedder_signature("m", 224, "Normalize(mean=0.4)", PE, timm)
 
 
 def test_embedder_signature_changes_with_the_weights_or_the_loader():
-    base = embedder_signature("m", 224, "Normalize(mean=0.5)", WEIGHTS)
-    other_revision = WEIGHTS.replace("@255fa76e", "@00000000")
-    other_loader = WEIGHTS.replace("timm-1.0.30", "timm-1.0.31")
+    base = embedder_signature("m", 224, "Normalize(mean=0.5)", PE, loader("1.0.30"))
+    other_revision = dataclasses.replace(PE, revision="0" * 40)
 
-    assert embedder_signature("m", 224, "Normalize(mean=0.5)", other_revision) != base
-    assert embedder_signature("m", 224, "Normalize(mean=0.5)", other_loader) != base
+    assert embedder_signature("m", 224, "Normalize(mean=0.5)", other_revision, loader("1.0.30")) != base
+    assert embedder_signature("m", 224, "Normalize(mean=0.5)", PE, loader("1.0.31")) != base

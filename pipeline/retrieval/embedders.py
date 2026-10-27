@@ -11,6 +11,7 @@ import functools
 import hashlib
 import re
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Protocol
 
 import numpy as np
@@ -75,21 +76,17 @@ def _layer_norm(mod: torch.nn.LayerNorm, x: torch.Tensor) -> torch.Tensor:
 PAD_GRAY = (128, 128, 128)
 
 
-def _weights(backbone: Backbone, loader: object) -> str:
-    """The weights part of a signature: the pinned commit and the version of the library that builds the model."""
-    return f"{backbone.repo}@{backbone.revision} {loader.__name__}-{loader.__version__}"
-
-
-def embedder_signature(name: str, input_px: int, preprocess: object, weights: str) -> str:
-    """Name, input size and a hash of the preprocessing and the weights, such as
-    "pe-core-s16-384px-176701e0". `weights` is "<repo>@<revision> <loader>-<version>".
+def embedder_signature(name: str, input_px: int, preprocess: object, backbone: Backbone, loader: ModuleType) -> str:
+    """Name, input size and a hash of the preprocessing, the backbone's pinned commit and the
+    version of `loader`, the library that builds the model, such as "pe-core-s16-384px-176701e0".
 
     Every shard and index records the signature of the embedder that wrote it, and identify
     refuses an index from another one, so vectors from other preprocessing, another weights
-    revision or another version of the library that builds the model are never mixed. A change
-    to pooling in this repo doesn't show up here: give that a new name.
+    commit or another library version are never mixed. A change to pooling in this repo
+    doesn't show up here: give that a new name.
     """
     text = re.sub(r" at 0x[0-9a-f]+", "", repr(preprocess))  # function reprs carry a memory address
+    weights = f"{backbone.repo}@{backbone.revision} {loader.__name__}-{loader.__version__}"
     return f"{name}-{input_px}px-{hashlib.sha1(f'{text}\n{weights}'.encode()).hexdigest()[:8]}"
 
 
@@ -160,7 +157,7 @@ class ClipEmbedder(TorchEmbedder):
         if device == "mps":
             exact_layer_norms(self.model)
         self.dim = self.model.visual.output_dim
-        self.signature = embedder_signature(self.name, self.input_px, self._preprocess, _weights(backbone, open_clip))
+        self.signature = embedder_signature(self.name, self.input_px, self._preprocess, backbone, open_clip)
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._preprocess(img.convert("RGB"))
@@ -192,7 +189,7 @@ class HfEmbedder(TorchEmbedder):
         if device == "mps":
             exact_layer_norms(self.model)
         self._siglip = name.startswith("siglip")
-        self.signature = embedder_signature(name, input_px, self._processor, _weights(backbone, transformers))
+        self.signature = embedder_signature(name, input_px, self._processor, backbone, transformers)
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._processor(images=img.convert("RGB"), return_tensors="pt")["pixel_values"][0]
@@ -235,7 +232,7 @@ class PeCoreEmbedder(TorchEmbedder):
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
         ])
-        self.signature = embedder_signature(self.name, self.input_px, self._preprocess, _weights(backbone, timm))
+        self.signature = embedder_signature(self.name, self.input_px, self._preprocess, backbone, timm)
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._preprocess(img.convert("RGB"))

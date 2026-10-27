@@ -36,7 +36,7 @@ def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construc
             raise SystemExit(f"{shard} holds {embs.shape} vectors for {len(uuids)} ids, expected dim {dim}")
         parts.append((uuids, embs))
     if len(signatures) > 1:
-        raise SystemExit(f"Shards in {out_dir} come from different preprocessing ({', '.join(sorted(signatures))}). "
+        raise SystemExit(f"Shards in {out_dir} come from different embedders, by preprocessing, weights or library ({', '.join(sorted(signatures))}). "
                          "Re-embed the old ones.")
     labels = np.concatenate([uuids for uuids, _ in parts])
 

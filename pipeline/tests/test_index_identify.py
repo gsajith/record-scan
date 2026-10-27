@@ -182,7 +182,7 @@ def test_build_index_refuses_shards_from_different_preprocessing(tmp_path):
         np.savez(tmp_path / f"{prefix}.npz", uuids=np.array([ABBEY], dtype="U36"),
                  embs=np.array([E0], dtype=np.float16), signature=signature)
 
-    with pytest.raises(SystemExit, match="different preprocessing"):
+    with pytest.raises(SystemExit, match="different embedders"):
         build_index(sorted(tmp_path.glob("*.npz")), 4, tmp_path, M=16, ef_construction=100)
 
 
