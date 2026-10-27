@@ -52,8 +52,8 @@ class Identifier:
     def identify(self, img: Image.Image, k: int = 5, views: int = 3) -> list[Match]:
         """Top k albums: k*10 neighbours per view, best score per group, one match per group.
 
-        A group is the duplicate cluster when clusters are given, else the album (title plus
-        primary artist), so reissues of one album take a single slot. When one big group fills
+        A group is the duplicate cluster when clusters are given, else the album (its MusicBrainz
+        release group, Catalog.album_of), so reissues of one album take a single slot. When one big group fills
         the neighbours and fewer than k groups come back, the search widens 4x, at most three
         times, and returns what it found.
         """
@@ -81,12 +81,9 @@ class Identifier:
         if self.clusters is not None:
             return self.clusters.get(mbid, mbid)
         try:
-            key = self.catalog.album_key(mbid)
+            return self.catalog.album_of(mbid)
         except KeyError:  # a cover without a catalog row stands alone
             return mbid
-        # "+" and "÷" both normalize to an empty title, and unknown artists to an empty name
-        title, artist = key.split("|", 1)
-        return key if title and artist else mbid
 
     def _match(self, mbid: str, score: float) -> Match:
         release = self.catalog.release(mbid)

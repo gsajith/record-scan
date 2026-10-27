@@ -265,8 +265,8 @@ Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_vie
 - `query_views` applies EXIF orientation first, so a portrait phone photo is not embedded sideways.
 - `identify` widens its search past k*10 neighbours when one big group, such as the 38 Abbey Road releases, fills them and fewer than k albums come back.
 - `embed.py` reads the drive only and has no `--source shards`, `--uuids` or `--px` yet. Tasks 5 and 7 add them along with their first callers. If the drive drops mid-prefix, it exits without marking the prefix done.
-- Deferred from the PR #37 review, both for when Task 5's shards remove the drive bottleneck: run `preprocess` in the decode workers instead of the main thread, and cache `album_key` lookups in `Identifier` for eval runs.
-- `identify` keeps an album with an empty title or artist key, such as Ed Sheeran's "+" and "÷", as its own group. The eval's hit rule (#16) has the same collision to decide on.
+- Deferred from the PR #37 review, both for when Task 5's shards remove the drive bottleneck: run `preprocess` in the decode workers instead of the main thread, and cache `album_of` lookups in `Identifier` for eval runs.
+- `identify` gives each album one slot, where an album is a MusicBrainz release group (`Catalog.album_of`, the rule the eval also uses since Gautham's #17 ruling).
 - HNSW at the default `ef=128` returned the right top-1 album for 99.8% of 500 noisy queries on the 2025-11 index, with no gain up to `ef=1024`. Eval at 50k distractors can use exact search if that 0.2% matters.
 
 Progress: issue #16 landed `eval.py`, the locked eval rules, in a commit of its own. Gautham signed them off in #17 on 2026-10-27 with the release-group change below. The rules:
