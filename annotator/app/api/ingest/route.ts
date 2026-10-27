@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { parseSet, setDir } from "@/lib/data";
 import { splitFor, type SetName } from "@/lib/labels";
-import { ingestImage, ingestWild, NearDuplicateError, NotAnImageError } from "@/lib/store";
+import { groupOf, ingestImage, ingestWild, NearDuplicateError, NotAnImageError } from "@/lib/store";
 
 const MAX_DOWNLOAD = 30 * 1024 * 1024;
 const WebUrl = z.url({ protocol: /^https?$/ });
@@ -44,7 +44,8 @@ export async function POST(request: Request) {
       set === "wild"
         ? await ingestWild(setDir(set), bytes, sourceUrl)
         : { ...(await ingestImage(setDir(set), bytes)), sourceUrl: null };
-    return Response.json({ ...saved, split: splitFor(set, saved.sha1) });
+    // An identical frame may already be in with a group; report the half the label will get
+    return Response.json({ ...saved, split: splitFor(set, saved.sha1, groupOf(setDir(set), saved.sha1)) });
   } catch (e) {
     if (e instanceof NotAnImageError) {
       return Response.json({ error: "That isn't an image the labeler can read." }, { status: 400 });

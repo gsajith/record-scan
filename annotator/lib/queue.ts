@@ -1,6 +1,7 @@
 // What to label next: photos without a label line, then frames waiting in the inbox.
 import { mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { videoOf } from "./frames";
 import { SHA1_RE } from "./labels";
 import { appendSource, ingestImage, isMissing, NotAnImageError, photoFile, readLabels, readSources } from "./store";
 
@@ -15,20 +16,6 @@ const IMAGE_FILE = /\.(jpe?g|png|heic|heif)$/i;
  */
 export type QueueItem = { sha1: string; file: string; video: string | null; sourceUrl: string | null };
 
-// The sampler writes exactly two digits; "scan-1.jpg" dropped in by hand is its own photo
-function videoOf(frameName: string): string {
-  return frameName.replace(/\.[^.]+$/, "").replace(/-\d{2}$/, "");
-}
-
-/**
- * The source group in a clip name "<group>~<video>", such as "yt-UC123~abc-s01" for a YouTube
- * channel's video. Every frame of a group lands in the same half (splitFor).
- */
-function groupOfFrame(frameName: string): string | null {
-  const video = videoOf(frameName);
-  const cut = video.indexOf("~");
-  return cut > 0 ? video.slice(0, cut) : null;
-}
 
 /** Unlabeled photos, oldest first, so frames keep the order they came in. */
 function pendingPhotos(setDir: string, labeled: Map<string, unknown>): string[] {
@@ -71,8 +58,7 @@ async function takeFromInbox(setDir: string, name: string): Promise<void> {
     dest = "unreadable"; // move it aside so one bad file can't block the queue
   }
   mkdirSync(join(inbox, dest), { recursive: true });
-  const group = groupOfFrame(name);
-  if (sha1) appendSource(setDir, { sha1, frame: name, ...(group && { group }) });
+  if (sha1) appendSource(setDir, { sha1, frame: name });
   try {
     renameSync(join(inbox, name), join(inbox, dest, name));
   } catch (e) {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { nextInQueue } from "./queue";
-import { appendLabel, ingestImage, readSources } from "./store";
+import { appendLabel, groupOf, ingestImage } from "./store";
 
 function tempSetDir(): string {
   return join(mkdtempSync(join(tmpdir(), "queue-")), "gold");
@@ -119,18 +119,27 @@ describe("nextInQueue", () => {
     expect((await nextInQueue(setDir)).next?.video).toBe("abbey");
   });
 
-  it("records the source group from a clip named <group>~<video>, so its frames share a half", async () => {
+  it("groups a photo by its clip, <group>~<video> or else the video itself, and keeps the first", async () => {
     const setDir = tempSetDir();
     const inbox = join(setDir, "inbox");
     mkdirSync(inbox, { recursive: true });
-    writeFileSync(join(inbox, "yt-UC123~abc-s01-01.jpg"), await jpeg("#f0f"));
+    const black = await jpeg("#000");
+    writeFileSync(join(inbox, "a-01.jpg"), black); // an identical frame, met again below
     writeFileSync(join(inbox, "plain-01.jpg"), await jpeg("#0ff"));
+    writeFileSync(join(inbox, "yt-UC123~abc-s01-01.jpg"), await jpeg("#f0f"));
+    writeFileSync(join(inbox, "yt-UC9~xyz-s01-01.jpg"), black);
+    const pasted = await ingestImage(setDir, await jpeg("#ff0"));
 
-    const first = await nextInQueue(setDir);
-    const second = await nextInQueue(setDir, [first.next!.sha1]);
+    // Take every inbox frame; the second black frame is the same photo, so three come out
+    let skip: string[] = [pasted.sha1];
+    const seen = [];
+    for (let { next } = await nextInQueue(setDir, skip); next; { next } = await nextInQueue(setDir, skip)) {
+      seen.push(next);
+      skip = [...skip, next.sha1];
+    }
 
-    const sources = readSources(setDir);
-    expect(sources.get(second.next!.sha1)?.group).toBe("yt-UC123");
-    expect(sources.get(first.next!.sha1)?.group).toBeUndefined();
+    const groups = Object.fromEntries(seen.map((p) => [p.sha1, groupOf(setDir, p.sha1)]));
+    expect(Object.values(groups).sort()).toEqual(["a", "plain", "yt-UC123"]);
+    expect(groupOf(setDir, pasted.sha1)).toBeNull();
   });
 });
