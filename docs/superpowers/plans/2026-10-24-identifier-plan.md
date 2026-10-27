@@ -101,7 +101,7 @@ record-scan/
       eval.py                      gold/wild eval with lenient hits, slices, negatives
       sweep.py                     Step 2 runner -> docs/results/
     export/
-      to_coreml.py, to_executorch.py, parity.py   Task 8
+      to_coreml.py, to_executorch.py, parity.py, model.py   Task 8
     tests/
   annotator/                       the labeler (Task 3), Supabase removed
   docs/results/                    measured numbers, one file per run
@@ -384,9 +384,17 @@ def parity(model: str, exported: Path, images: list[Path]) -> float   # mean cos
 ```
 Device timing: iOS via Xcode's Core ML performance report on a connected iPhone (open the `.mlpackage`, Performance tab, run on device; record median, p95, compute-unit placement per layer, first-load time); Android via the ExecuTorch benchmark runner over `adb` on an available phone. Record every number and the phone model in the results file. Gate per the report: a candidate over 30 ms p95 on the oldest target phone, failing conversion, or under 0.99 parity drops out.
 
-- [ ] Step 1: Failing `test_parity_on_identity_model` (a tiny torch module exported with coremltools; parity 1.0).
-- [ ] Step 2: Implement the three scripts; export each candidate; run parity on 20 gallery images; fill the results file; note RoPE or unsupported-op failures verbatim.
-- [ ] Step 3: Commit `feat(pipeline): core ml and executorch export with parity check` plus results.
+- [x] Step 1: Failing `test_parity_on_identity_model` (a tiny torch module exported with coremltools; parity 1.0).
+- [x] Step 2: Implement the three scripts; export each candidate; run parity on 20 gallery images; fill the results file; note RoPE or unsupported-op failures verbatim.
+- [x] Step 3: Commit `feat(pipeline): core ml and executorch export with parity check` plus results.
+
+Progress: issue #27 landed the Mac half; phone timing is #28, Gautham's. Numbers in `docs/results/2026-10-27-export-spike.md`. Notes:
+- ExecuTorch 1.x needs torch 2.9, which this plan's torch 2.8 pin missed. The one venv moved to torch 2.9.1 with executorch 1.0.1 and coremltools 9.0 in `requirements.txt` and both locks, not `requirements-tools.txt`, which no lock covers. Every embedder's vectors on 200 prefix-00 covers match the torch 2.8 embeddings at cosine 1.000000, and the MPS test passes, so nothing needs re-embedding. `onnx` was not needed: both exporters start from `torch.export`.
+- All four candidates convert. DINOv3 ViT-S and ViT-S+ fail parity in plain Core ML fp16 (0.16 and -0.04) because their attention scores reach 2.5 million, past fp16's 65,504. `to_coreml --precision fp16-attn32` keeps attention's matmuls and softmax in fp32 (parity 0.999995), which puts them on the GPU instead of the Neural Engine. ConvNeXt and PE-Core pass in plain fp16. The plan's `--fp16` became `--precision fp32|fp16|fp16-attn32`.
+- XNNPACK lowering is fragmented: 124 delegate calls for ViT-S, with layer norms and RoPE ops on portable kernels between them, so Mac CPU times (44 to 227 ms) say little about Android.
+- `to_executorch` takes `--backend xnnpack` only: the pip wheel has no Qualcomm backend (the import error is quoted in the results).
+- Each embedder has `features(pixels)`, which `embed` and the export both call. `pipeline/export/model.py` wraps it into an exportable module and writes `<export>.json` naming the embedder signature; `parity` refuses an export from another signature (Review focus 7).
+- `parity(model, exported, images, px=None)` takes `px` too, since DINOv3 runs at any multiple of 16. The identity test runs through `mean_cosine(reference, exported, inputs)`, which `parity` calls, for both Core ML and ExecuTorch, plus a reversed export that must score under 0.99.
 
 ### Task 9: docs for Phase A
 
