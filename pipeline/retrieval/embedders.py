@@ -43,7 +43,7 @@ EMBEDDER_NAMES = tuple(BACKBONES)
 
 
 def exact_layer_norms(model: torch.nn.Module) -> None:
-    """Swap every LayerNorm's forward for the plain formula. On MPS (torch 2.8) the fused
+    """Swap every LayerNorm's forward for the plain formula. On MPS (seen on torch 2.8) the fused
     layer_norm goes wrong when a vector has a large mean and a tiny spread: on flat areas of a
     cover, DINOv3 ConvNeXt's first LayerNorm came out 13% off CPU and float64, while the plain
     formula on MPS matches float64 to 1e-7."""
@@ -99,7 +99,26 @@ class Embedder(Protocol):
         ...
 
 
-class ClipEmbedder:
+class TorchEmbedder:
+    """The embed every backbone shares: preprocess, batch, features, L2-normalize."""
+
+    device: str
+
+    def preprocess(self, img: Image.Image) -> torch.Tensor:
+        raise NotImplementedError
+
+    def features(self, pixels: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
+
+    @torch.no_grad()
+    def embed(self, images: list[Image.Image]) -> np.ndarray:
+        batch = torch.stack([self.preprocess(img) for img in images]).to(self.device)
+        embs = self.features(batch).float()
+        embs = embs / embs.norm(dim=-1, keepdim=True)
+        return embs.cpu().numpy()
+
+
+class ClipEmbedder(TorchEmbedder):
     """open_clip ViT-B-32 with the OpenAI weights (cached as timm/vit_base_patch32_clip_224.openai).
 
     The -quickgelu config matches how OpenAI trained them; plain ViT-B-32 swaps in GELU and
@@ -126,15 +145,8 @@ class ClipEmbedder:
     def features(self, pixels: torch.Tensor) -> torch.Tensor:
         return self.model.encode_image(pixels)
 
-    @torch.no_grad()
-    def embed(self, images: list[Image.Image]) -> np.ndarray:
-        batch = torch.stack([self.preprocess(img) for img in images]).to(self.device)
-        embs = self.features(batch).float()
-        embs = embs / embs.norm(dim=-1, keepdim=True)
-        return embs.cpu().numpy()
 
-
-class HfEmbedder:
+class HfEmbedder(TorchEmbedder):
     """A Hugging Face transformers backbone with the image processor from its repo.
 
     DINOv3 returns the final-norm CLS token for ViTs and the normed global average pool for
@@ -163,15 +175,8 @@ class HfEmbedder:
         out = self.model.get_image_features(pixel_values=pixels) if self._siglip else self.model(pixel_values=pixels)
         return out.pooler_output
 
-    @torch.no_grad()
-    def embed(self, images: list[Image.Image]) -> np.ndarray:
-        batch = torch.stack([self.preprocess(img) for img in images]).to(self.device)
-        embs = self.features(batch).float()
-        embs = embs / embs.norm(dim=-1, keepdim=True)
-        return embs.cpu().numpy()
 
-
-class PeCoreEmbedder:
+class PeCoreEmbedder(TorchEmbedder):
     """PE-Core S/16 at 384 px through timm. Keeps the head, a projection into the 512-d CLIP
     space, which is the image embedding on the model card.
 
@@ -191,7 +196,7 @@ class PeCoreEmbedder:
         self.device = device
         self.model = timm.create_model(backbone.repo.removeprefix("timm/"), pretrained=True).to(device).eval()
         # The attention pool feeds its learned query, expanded to the batch without a copy, into a
-        # Linear. On MPS (torch 2.8) that aborts the process with "buffer is not large enough";
+        # Linear. On MPS (seen on torch 2.8) that aborts the process with "buffer is not large enough";
         # a contiguous copy fixes it and matches CPU output.
         self.model.attn_pool.q.register_forward_pre_hook(lambda _, args: (args[0].contiguous(),))
         if device == "mps":
@@ -208,13 +213,6 @@ class PeCoreEmbedder:
 
     def features(self, pixels: torch.Tensor) -> torch.Tensor:
         return self.model(pixels)
-
-    @torch.no_grad()
-    def embed(self, images: list[Image.Image]) -> np.ndarray:
-        batch = torch.stack([self.preprocess(img) for img in images]).to(self.device)
-        embs = self.features(batch).float()
-        embs = embs / embs.norm(dim=-1, keepdim=True)
-        return embs.cpu().numpy()
 
 
 def load_embedder(name: str, device: str | None = None, input_px: int | None = None) -> Embedder:

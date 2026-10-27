@@ -10,7 +10,7 @@ for name in ("dinov3-vits16", "dinov3-convnext-tiny"):
     x = torch.stack([emb.preprocess(Image.open(p)) for p in gallery_sample(4)])
     peaks = {}
     hooks = [m.register_forward_hook(lambda m, i, o, n=n: peaks.__setitem__(n, max(peaks.get(n, 0), float(o.abs().max()) if torch.is_tensor(o) else 0)))
-             for n, m in mod.named_modules() if n and isinstance(getattr(m, "forward", None), object) and not list(m.children())]
+             for n, m in mod.named_modules() if n and not list(m.children())]
     with torch.no_grad():
         ref = mod(x)
     for h in hooks: h.remove()
