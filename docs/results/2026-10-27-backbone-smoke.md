@@ -1,6 +1,6 @@
 # Six more backbones, smoke run on prefix 00
 
-Issue #18. Embedded at git SHA eea47dd; after rebasing onto main (#16's eval and its release-group changes to identify), the lookups were rerun at 10f1d07 with the same results. M1 Mac on MPS, covers read from the Seagate drive over USB. No
+Issue #18. Embedded at git SHA eea47dd; after rebasing onto main (#16's eval and its release-group changes to identify), the lookups were rerun at 10f1d07 with the same results. PE-Core was re-embedded after the PR #43 review switched it to Meta's reference preprocessing (squash to 384 px, bilinear); its rows are from that run. M1 Mac on MPS, covers read from the Seagate drive over USB. No
 eval config applies: these runs check that each model works end to end, not how accurate it
 is. Accuracy on phone photos is Task 7's sweep, run with #16's eval.
 
@@ -18,7 +18,7 @@ python -m pipeline.retrieval.build_index --model NAME
 | dinov3-convnext-tiny | 768 | 224 | 12,076 | 106 | 114 |
 | dinov3-vitb16 | 768 | 224 | 12,076 | 176 | 69 |
 | siglip2-b16-256 | 768 | 256 | 12,076 | 181 | 67 |
-| pe-core-s16 | 512 | 384 | 12,076 | 237 | 51 |
+| pe-core-s16 | 512 | 384 | 12,076 | 251 | 48 |
 
 The first model's run read covers off the disk. Later runs found most of them in the macOS
 file cache, so the rates are not a fair speed comparison. Each run also skipped the 3,358
@@ -38,7 +38,7 @@ The same three Cover Art Archive `front-500` covers as the CLIP smoke run (00159
 | dinov3-convnext-tiny | 3 of 3 | 1.000, 1.000, 1.000 | 0.57, 0.73, 0.68 |
 | dinov3-vitb16 | 3 of 3 | 1.000, 1.000, 1.000 | 0.39, 0.57, 0.50 |
 | siglip2-b16-256 | 3 of 3 | 1.000, 1.000, 1.000 | 0.74, 0.68, 0.60 |
-| pe-core-s16 | 3 of 3 | 1.000, 1.000, 1.000 | 0.67, 0.69, 0.64 |
+| pe-core-s16 | 3 of 3 | 1.000, 1.000, 1.000 | 0.66, 0.68, 0.63 |
 
 Finding an exact copy says the path works, nothing about recall. The gap to the next album
 is not comparable across models either, since each spreads its scores differently.
@@ -61,6 +61,22 @@ After both fixes, on 200 prefix-00 covers (every 60th file), in batches of 50:
 | Model | Lowest cosine, MPS vs CPU |
 |---|---|
 | all seven | 1.000000 |
+
+Rerun after any torch upgrade. From the repo root with the drive mounted:
+
+```python
+from PIL import Image
+import numpy as np
+from pipeline import config
+from pipeline.retrieval.embedders import EMBEDDER_NAMES, load_embedder
+
+paths = sorted(p for p in (config.require_image_root() / "00").glob("*.jpg") if config.is_uuid(p.stem))[::60][:200]
+imgs = [Image.open(p).convert("RGB") for p in paths]
+for name in EMBEDDER_NAMES:
+    a = np.concatenate([load_embedder(name, device="mps").embed(imgs[i:i + 50]) for i in range(0, 200, 50)])
+    b = np.concatenate([load_embedder(name, device="cpu").embed(imgs[i:i + 50]) for i in range(0, 200, 50)])
+    print(name, np.sum(a * b, axis=1).min())
+```
 
 The prefix-00 embeddings from the first run were deleted and rebuilt with the fixed code;
 the numbers above are from the rebuild.

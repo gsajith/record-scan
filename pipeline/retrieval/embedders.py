@@ -47,6 +47,8 @@ def exact_layer_norms(model: torch.nn.Module) -> None:
     formula on MPS matches float64 to 1e-7."""
     for mod in model.modules():
         if isinstance(mod, torch.nn.LayerNorm):
+            # _layer_norm handles one normalized dim, with weight and bias both or neither
+            assert len(mod.normalized_shape) == 1 and (mod.weight is None) == (mod.bias is None), mod
             mod.forward = functools.partial(_layer_norm, mod)
 
 
@@ -143,7 +145,12 @@ class HfEmbedder:
 
 class PeCoreEmbedder:
     """PE-Core S/16 at 384 px through timm. Keeps the head, a projection into the 512-d CLIP
-    space, which is the image embedding on the model card."""
+    space, which is the image embedding on the model card.
+
+    Preprocessing follows Meta's reference (perception_models get_image_transform), which
+    squashes the whole image to 384x384 with bilinear resizing, as in training. timm's own
+    config resizes the short side bicubically and center-crops instead.
+    """
 
     name = "pe-core-s16"
     dim = 512
@@ -151,6 +158,7 @@ class PeCoreEmbedder:
 
     def __init__(self, backbone: Backbone, device: str):
         import timm
+        import torchvision.transforms as T
 
         self.device = device
         self.model = timm.create_model(backbone.repo.removeprefix("timm/"), pretrained=True).to(device).eval()
@@ -160,7 +168,11 @@ class PeCoreEmbedder:
         self.model.attn_pool.q.register_forward_pre_hook(lambda _, args: (args[0].contiguous(),))
         if device == "mps":
             exact_layer_norms(self.model)
-        self._preprocess = timm.data.create_transform(**timm.data.resolve_model_data_config(self.model), is_training=False)
+        self._preprocess = T.Compose([
+            T.Resize((self.input_px, self.input_px), interpolation=T.InterpolationMode.BILINEAR),
+            T.ToTensor(),
+            T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+        ])
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._preprocess(img.convert("RGB"))
