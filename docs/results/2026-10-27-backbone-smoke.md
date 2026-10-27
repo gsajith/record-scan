@@ -1,6 +1,6 @@
 # Six more backbones, smoke run on prefix 00
 
-Issue #18, git SHA eea47dd, M1 Mac on MPS, covers read from the Seagate drive over USB. No
+Issue #18. Embedded at git SHA eea47dd; after rebasing onto main (#16's eval and its release-group changes to identify), the lookups were rerun at 10f1d07 with the same results. M1 Mac on MPS, covers read from the Seagate drive over USB. No
 eval config applies: these runs check that each model works end to end, not how accurate it
 is. Accuracy on phone photos is Task 7's sweep, run with #16's eval.
 
