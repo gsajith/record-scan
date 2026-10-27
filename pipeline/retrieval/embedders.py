@@ -85,8 +85,14 @@ class Embedder(Protocol):
     dim: int
     input_px: int
     signature: str  # see preprocess_signature
+    model: torch.nn.Module
 
     def preprocess(self, img: Image.Image) -> torch.Tensor: ...
+
+    def features(self, pixels: torch.Tensor) -> torch.Tensor:
+        """Pooled vectors, not yet normalized, for a batch of preprocessed images. The phone
+        export traces this, so it and `embed` run the same model path."""
+        ...
 
     def embed(self, images: list[Image.Image]) -> np.ndarray:
         """(n, dim) float32, each row L2-normalized."""
@@ -117,10 +123,13 @@ class ClipEmbedder:
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._preprocess(img.convert("RGB"))
 
+    def features(self, pixels: torch.Tensor) -> torch.Tensor:
+        return self.model.encode_image(pixels)
+
     @torch.no_grad()
     def embed(self, images: list[Image.Image]) -> np.ndarray:
         batch = torch.stack([self.preprocess(img) for img in images]).to(self.device)
-        embs = self.model.encode_image(batch).float()
+        embs = self.features(batch).float()
         embs = embs / embs.norm(dim=-1, keepdim=True)
         return embs.cpu().numpy()
 
@@ -150,11 +159,14 @@ class HfEmbedder:
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._processor(images=img.convert("RGB"), return_tensors="pt")["pixel_values"][0]
 
+    def features(self, pixels: torch.Tensor) -> torch.Tensor:
+        out = self.model.get_image_features(pixel_values=pixels) if self._siglip else self.model(pixel_values=pixels)
+        return out.pooler_output
+
     @torch.no_grad()
     def embed(self, images: list[Image.Image]) -> np.ndarray:
         batch = torch.stack([self.preprocess(img) for img in images]).to(self.device)
-        out = self.model.get_image_features(pixel_values=batch) if self._siglip else self.model(pixel_values=batch)
-        embs = out.pooler_output.float()
+        embs = self.features(batch).float()
         embs = embs / embs.norm(dim=-1, keepdim=True)
         return embs.cpu().numpy()
 
@@ -194,10 +206,13 @@ class PeCoreEmbedder:
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._preprocess(img.convert("RGB"))
 
+    def features(self, pixels: torch.Tensor) -> torch.Tensor:
+        return self.model(pixels)
+
     @torch.no_grad()
     def embed(self, images: list[Image.Image]) -> np.ndarray:
         batch = torch.stack([self.preprocess(img) for img in images]).to(self.device)
-        embs = self.model(batch).float()
+        embs = self.features(batch).float()
         embs = embs / embs.norm(dim=-1, keepdim=True)
         return embs.cpu().numpy()
 
