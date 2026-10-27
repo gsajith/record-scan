@@ -18,6 +18,7 @@ class MeanColorEmbedder:
     name = "fake"
     dim = 3
     input_px = 8
+    signature = "fake-8px-test"
 
     def __init__(self):
         self.calls = 0
@@ -51,6 +52,7 @@ def test_embed_prefix_skips_corrupt_and_resumes(tmp_path, reload_config):
     shard = np.load(out / "00.npz")
     assert shard["uuids"].dtype == np.dtype("U36")
     assert shard["embs"].dtype == np.float16
+    assert str(shard["signature"]) == "fake-8px-test"
     rows = dict(zip(shard["uuids"], shard["embs"]))
     assert set(rows) == {RED, GREEN}
     np.testing.assert_allclose(rows[RED], [1, 0, 0], atol=0.02)

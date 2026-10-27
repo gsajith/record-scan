@@ -42,6 +42,11 @@ class Identifier:
         self.catalog = catalog
         self.clusters = clusters
         self.ef = ef
+        signature_file = index_dir / "signature.txt"
+        built_by = signature_file.read_text() if signature_file.exists() else "an embedder from before signatures"
+        if built_by != embedder.signature:
+            raise SystemExit(f"{index_dir} was built by {built_by}, not {embedder.signature}. "
+                             "Re-embed and rebuild the index.")
         self.labels = np.load(index_dir / "labels.npy")
         self.index = hnswlib.Index(space="cosine", dim=embedder.dim)
         self.index.load_index(str(index_dir / "index.hnsw"))

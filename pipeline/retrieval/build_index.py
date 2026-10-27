@@ -2,9 +2,10 @@
 
     python -m pipeline.retrieval.build_index --model NAME [--M 32] [--ef-construction 200]
 
-Reads config.EMB_DIR/<model>/<prefix>.npz and writes index.hnsw and labels.npy (row id ->
-mbid, U36) beside them. NAME is the shard folder, so the 2025-11 clip-vit-b-32-aug13 shards
-build too.
+Reads config.EMB_DIR/<model>/<prefix>.npz and writes index.hnsw, labels.npy (row id ->
+mbid, U36) and signature.txt beside them. Every shard must carry the same embedder
+signature (see embedders.preprocess_signature); shards from before signatures need
+re-embedding.
 """
 
 import argparse
@@ -24,14 +25,19 @@ def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construc
     if not shards:
         raise SystemExit(f"No embedding shards to index in {out_dir}")
     parts = []
+    signatures = set()
     for shard in shards:
-        # The 2025-11 shards store uuids as an object array, which needs pickle to load.
-        # Safe here: shards are local files our own embed runs wrote under RS_DATA_DIR.
-        with np.load(shard, allow_pickle=True) as data:
+        with np.load(shard) as data:
             uuids, embs = data["uuids"].astype("U36"), data["embs"]
+            signatures.add(str(data["signature"]) if "signature" in data else None)
         if embs.ndim != 2 or embs.shape[1] != dim or len(uuids) != len(embs):
             raise SystemExit(f"{shard} holds {embs.shape} vectors for {len(uuids)} ids, expected dim {dim}")
         parts.append((uuids, embs))
+    if None in signatures:
+        raise SystemExit(f"Some shards in {out_dir} predate embedder signatures. Re-embed them.")
+    if len(signatures) > 1:
+        raise SystemExit(f"Shards in {out_dir} come from different preprocessing ({', '.join(sorted(signatures))}). "
+                         "Re-embed the old ones.")
     labels = np.concatenate([uuids for uuids, _ in parts])
 
     index = hnswlib.Index(space="cosine", dim=dim)
@@ -42,11 +48,14 @@ def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construc
         start += len(uuids)
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Drop the old signature first: a crash mid-swap then leaves an index identify refuses
+    (out_dir / "signature.txt").unlink(missing_ok=True)
     index.save_index(str(out_dir / "index.hnsw.tmp"))
     with (out_dir / "labels.npy.tmp").open("wb") as f:  # a file handle stops numpy from appending .npy
         np.save(f, labels)
     os.replace(out_dir / "index.hnsw.tmp", out_dir / "index.hnsw")
     os.replace(out_dir / "labels.npy.tmp", out_dir / "labels.npy")
+    (out_dir / "signature.txt").write_text(signatures.pop())
     return len(labels)
 
 
@@ -59,7 +68,7 @@ def main() -> None:
 
     emb_dir = config.EMB_DIR / args.model
     shards = sorted(emb_dir.glob(SHARD_GLOB))
-    dim = np.load(shards[0], allow_pickle=True)["embs"].shape[1] if shards else 0
+    dim = np.load(shards[0])["embs"].shape[1] if shards else 0
     n = build_index(shards, dim, emb_dir, args.M, args.ef_construction)
     print(f"Indexed {n:,} vectors ({dim}-d) from {len(shards)} shards into {emb_dir / 'index.hnsw'}")
 

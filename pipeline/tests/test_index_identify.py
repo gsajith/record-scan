@@ -26,6 +26,7 @@ class FixedEmbedder:
     name = "fixed"
     dim = 4
     input_px = 8
+    signature = "fixed-8px-test"
 
     def __init__(self, *vectors):
         self.vectors = np.array(vectors, dtype=np.float32)
@@ -78,6 +79,7 @@ def index_dir(tmp_path):
             shard_dir / f"{prefix}.npz",
             uuids=np.array(list(rows), dtype="U36"),
             embs=np.array([unit(v) for v in rows.values()], dtype=np.float16),
+            signature=FixedEmbedder.signature,
         )
     assert build_index(sorted(shard_dir.glob("*.npz")), 4, shard_dir, M=16, ef_construction=100) == 4
     return shard_dir
@@ -112,7 +114,8 @@ def test_identify_max_pools_views_and_uses_clusters(catalog, index_dir):
 
 
 def test_build_index_rejects_wrong_dim(tmp_path):
-    np.savez(tmp_path / "00.npz", uuids=np.array([ABBEY], dtype="U36"), embs=np.zeros((1, 3), np.float16))
+    np.savez(tmp_path / "00.npz", uuids=np.array([ABBEY], dtype="U36"), embs=np.zeros((1, 3), np.float16),
+             signature=FixedEmbedder.signature)
 
     with pytest.raises(SystemExit, match="00.npz"):
         build_index([tmp_path / "00.npz"], 4, tmp_path, M=16, ef_construction=100)
@@ -127,6 +130,7 @@ def test_identify_widens_search_when_one_group_fills_the_neighbours(catalog, tmp
         tmp_path / "00.npz",
         uuids=np.array([*lookalikes, DEBUT], dtype="U36"),
         embs=np.array([*vectors, unit([0.6, 0.8, 0, 0])], dtype=np.float16),
+        signature=FixedEmbedder.signature,
     )
     build_index([tmp_path / "00.npz"], 4, tmp_path, M=16, ef_construction=100)
     clusters = dict.fromkeys(lookalikes, 1)
@@ -144,7 +148,7 @@ def test_identify_keeps_albums_without_a_release_group_apart(tmp_path):
         {"title": "÷", "id": divide, "artist_ids": [ed]},
     ], {ed: {"name": "Ed Sheeran"}})
     np.savez(tmp_path / "00.npz", uuids=np.array([plus, divide], dtype="U36"),
-             embs=np.array([E0, unit([0.9, 0.44, 0, 0])], dtype=np.float16))
+             embs=np.array([E0, unit([0.9, 0.44, 0, 0])], dtype=np.float16), signature=FixedEmbedder.signature)
     build_index([tmp_path / "00.npz"], 4, tmp_path, M=16, ef_construction=100)
 
     matches = Identifier(FixedEmbedder(E0), tmp_path, Catalog(tmp_path / "catalog.sqlite")).identify(
@@ -162,7 +166,7 @@ def test_identify_keeps_same_titled_albums_apart(tmp_path):
         {"title": "Weezer", "id": green, "artist_ids": [weezer], "release_group": "88888888-8888-4888-8888-888888888882"},
     ], {weezer: {"name": "Weezer"}})
     np.savez(tmp_path / "00.npz", uuids=np.array([blue, green], dtype="U36"),
-             embs=np.array([E0, unit([0.9, 0.44, 0, 0])], dtype=np.float16))
+             embs=np.array([E0, unit([0.9, 0.44, 0, 0])], dtype=np.float16), signature=FixedEmbedder.signature)
     build_index([tmp_path / "00.npz"], 4, tmp_path, M=16, ef_construction=100)
 
     matches = Identifier(FixedEmbedder(E0), tmp_path, Catalog(tmp_path / "catalog.sqlite")).identify(
@@ -170,3 +174,21 @@ def test_identify_keeps_same_titled_albums_apart(tmp_path):
     )
 
     assert [m.mbid for m in matches] == [blue, green]
+
+
+def test_build_index_refuses_shards_from_different_preprocessing(tmp_path):
+    # Prefix 01 was re-embedded after a preprocessing change; 00 still holds old vectors
+    for prefix, signature in (("00", "fixed-8px-old"), ("01", FixedEmbedder.signature)):
+        np.savez(tmp_path / f"{prefix}.npz", uuids=np.array([ABBEY], dtype="U36"),
+                 embs=np.array([E0], dtype=np.float16), signature=signature)
+
+    with pytest.raises(SystemExit, match="different preprocessing"):
+        build_index(sorted(tmp_path.glob("*.npz")), 4, tmp_path, M=16, ef_construction=100)
+
+
+def test_identify_refuses_an_index_from_another_embedder(catalog, index_dir):
+    class Changed(FixedEmbedder):
+        signature = "fixed-8px-changed"
+
+    with pytest.raises(SystemExit, match="fixed-8px-test, not fixed-8px-changed"):
+        Identifier(Changed(E0), index_dir, catalog)

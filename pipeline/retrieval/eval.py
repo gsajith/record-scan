@@ -320,7 +320,8 @@ def run_eval(model: str, set_name: str, distractors: int, views: int, px: int | 
         raise SystemExit(f"No eval photos labeled in {es.set_dir}")
     embedder = load_embedder(model, input_px=px)
 
-    index_dir = work_dir / f"{model}-{embedder.input_px}px-{gallery_hash(gallery)}"
+    # Keyed by the embedder's signature, so changed preprocessing embeds a fresh gallery
+    index_dir = work_dir / f"{embedder.signature}-{gallery_hash(gallery)}"
     if not (index_dir / "index.hnsw").exists():
         root = config.require_image_root()
         index_dir.mkdir(parents=True, exist_ok=True)
@@ -332,7 +333,7 @@ def run_eval(model: str, set_name: str, distractors: int, views: int, px: int | 
         shard = index_dir / "gallery.npz"
         # Extra fronts are <mbid>-<cover_id>.jpg, so the first 36 characters of a stem are the mbid
         np.savez(shard, uuids=np.array([s[:36] for s in stems], dtype="U36"), embs=embs.astype(np.float16),
-                 stems=np.array(stems))
+                 stems=np.array(stems), signature=embedder.signature)
         build_index([shard], embedder.dim, index_dir, M=32, ef_construction=200)
     identifier = Identifier(embedder, index_dir, catalog)
     # Hash the covers that were embedded, not the planned list: a gallery missing unreadable

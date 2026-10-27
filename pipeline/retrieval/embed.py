@@ -2,7 +2,8 @@
 
     python -m pipeline.retrieval.embed --model NAME (--prefixes 00 01 | --all) [--batch 64] [--workers 6]
 
-Writes config.EMB_DIR/<model>/<prefix>.npz (uuids U36, embs float16) and a <prefix>.done
+Writes config.EMB_DIR/<model>/<prefix>.npz (uuids U36, embs float16, and the embedder's
+signature) and a <prefix>.done
 marker. A rerun skips finished prefixes; an interrupted prefix starts over. Unreadable
 files go to <prefix>.errors.log in the same folder and are skipped. If the drive goes away
 mid-prefix, the run exits without marking the prefix done.
@@ -83,7 +84,7 @@ def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, batch: int, wor
     config.require_image_root()
     tmp = out_dir / f"{prefix}.tmp.npz"
     with tmp.open("wb") as f:  # a file handle stops numpy from appending another .npz
-        np.savez(f, uuids=np.array(uuids, dtype="U36"), embs=embs.astype(np.float16))
+        np.savez(f, uuids=np.array(uuids, dtype="U36"), embs=embs.astype(np.float16), signature=embedder.signature)
     os.replace(tmp, out_dir / f"{prefix}.npz")
     done.touch()
     return len(uuids)

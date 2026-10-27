@@ -92,3 +92,8 @@ def test_exact_layer_norms_fixes_mps_on_flat_vectors():
     exact_layer_norms(layer)
 
     torch.testing.assert_close(layer.float().to("mps")(x.to("mps")).cpu(), expected, rtol=1e-4, atol=1e-4)
+
+
+def test_exact_layer_norms_refuses_a_layer_norm_it_cannot_replace():
+    with pytest.raises(RuntimeError, match="one normalized dim"):
+        exact_layer_norms(torch.nn.LayerNorm((4, 4)))
