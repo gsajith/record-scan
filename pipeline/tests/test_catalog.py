@@ -104,6 +104,12 @@ def test_build_takes_covers_and_release_groups(catalog):
     assert catalog.covers(TRIBUTE) == []
 
 
+def test_cover_files_lists_a_prefix_folder_by_file_name(catalog):
+    assert catalog.cover_files("22") == [f"22/{DEBUT}-457.jpg", f"22/{DEBUT}.jpg"]
+    assert catalog.cover_files("11") == [f"11/{ABBEY}.jpg"]
+    assert catalog.cover_files("33") == []  # TRIBUTE has no cover
+
+
 def test_missing_db_exits(reload_config, tmp_path):
     with pytest.raises(SystemExit, match="build_catalog_db"):
         Catalog(tmp_path / "nope.sqlite")
