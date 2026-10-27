@@ -12,7 +12,7 @@
 
 **Contents:** Global constraints, Review focus, Decisions, What only Gautham can do (tasks and checkpoints), Layout, Phase A (Tasks 1 to 9), Phases B to D (outline), Data you can delete and when, Self-review notes.
 
-**Status:** Tasks 1 and 2 done. Task 6 code is in; its full cover fetch runs until about 2026-10-27, then a catalog rebuild finishes it. Task 3 is built; its checkpoint, an hour of real labeling (#13), is next. Task 4 done: seven backbones, identify and eval; Gautham signed off the eval rules (#17) with albums as release groups.
+**Status:** the open issues among #7 to #33 (`gh issue list --state open`) and each task's checkboxes and Progress notes. Status lives there, so parallel sessions don't all edit one line.
 
 ## Global constraints
 
@@ -36,6 +36,7 @@
 4. A corrupt JPEG or an unmounted drive mid-run: the gallery pass logs and skips the file, finishes the prefix, and resumes per prefix on rerun; it never creates folders under `/Volumes`. Test in Task 5.
 5. Lost or clobbered covers in a catalog update: the cover fetcher never overwrites or deletes a file on the drive, keeps an old cover while it is still upstream, backs off on 503, and resumes from its lookup log after a crash without repeating a request. Test in Task 6.
 6. Metric gaming: a model task that changes the hit rule, the split, seeds or test assertions so that a number improves without the model improving. Reviewers check for it in every task from Task 4 on; the eval-integrity constraint forbids it in the same commit.
+7. Stale derived artifacts: anything cached or marked done (shards, `.done` markers, indexes, eval gallery caches, resume logs) is keyed by everything that produced it, so changing the producer (preprocessing, weights, input size, the cover list) makes the old artifact rebuild or get refused. Reviewers check every diff that changes a producer for a cache that would still be reused. PRs #43 and #45 each shipped a miss of this kind.
 
 ---
 
