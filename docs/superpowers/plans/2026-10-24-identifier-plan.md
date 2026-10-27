@@ -307,6 +307,7 @@ Progress: #19 landed `shard_and_hash.py` and `Catalog.cover_files`, with tests f
 - A `.done` marker holds `RECIPE` and a hash of the prefix's cover list, so a catalog update redoes every prefix whose list changed. Change `RECIPE` when the decode, resize, encode or hash changes.
 - If the drive drops, the first unreadable cover stops the run and the prefix stays pending. A leftover `<prefix>.tar.tmp` is overwritten on the next run.
 - Prefix 00: 15,375 covers in 157 s, about 11.3 h for the rest, about 92 GB of shards. Numbers in `docs/results/2026-10-27-gallery-pass.md`.
+- About 2% of covers have a short side under 256 px: small originals (kept) and strips or banners with a 500 px long side. #56 (after #20, before #22) builds an exclusion list for non-covers (placeholders, blanks, strips) from contact sheets Gautham reviews; the drive and shards stay untouched.
 
 ### Task 6: new covers since the dump (D11, done)
 
