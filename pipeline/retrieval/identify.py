@@ -3,9 +3,7 @@
     python -m pipeline.retrieval.identify photo.jpg --model NAME [--index DIR] [--k 5] [--views 1|3]
 
 --index defaults to config.EMB_DIR/<model>. Pass it to query an index built in another
-shard folder. The 2025-11 clip-vit-b-32-aug13 shards used plain GELU ViT-B-32 rather than
-this QuickGELU baseline, so true matches against them score about 0.95, not 1.0: fine for a
-smoke test, never for numbers.
+shard folder. The index must come from an embedder with the same signature as this one.
 """
 
 import argparse
@@ -42,6 +40,11 @@ class Identifier:
         self.catalog = catalog
         self.clusters = clusters
         self.ef = ef
+        signature_file = index_dir / "signature.txt"
+        built_by = signature_file.read_text() if signature_file.exists() else "an embedder from before signatures"
+        if built_by != embedder.signature:
+            raise SystemExit(f"{index_dir} was built by {built_by}, not {embedder.signature}. "
+                             "Re-embed and rebuild the index.")
         self.labels = np.load(index_dir / "labels.npy")
         self.index = hnswlib.Index(space="cosine", dim=embedder.dim)
         self.index.load_index(str(index_dir / "index.hnsw"))

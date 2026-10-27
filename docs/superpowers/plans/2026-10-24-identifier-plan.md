@@ -228,11 +228,11 @@ def query_views(img: Image.Image) -> list[Image.Image]            # [center squa
 
 # embed.py   CLI: python -m pipeline.retrieval.embed --model NAME (--prefixes 00 01 | --all | --uuids FILE) [--source drive|shards] [--batch 64] [--workers 6] [--px 224]
 def embed_images(paths: list[Path], embedder: Embedder, batch: int, workers: int, errors_log: Path) -> tuple[list[str], np.ndarray]   # keyed by file stem (mbid); unreadable files logged to errors_log and skipped
-def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, batch: int, workers: int) -> int        # writes out_dir/<prefix>.npz once (uuids U36, embs float16), <prefix>.errors.log and <prefix>.done; source param added with shards (Task 5)
-def pending_prefixes(out_dir: Path) -> list[str]                  # source param added with shards (Task 5)
+def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, batch: int, workers: int) -> int        # writes out_dir/<prefix>.npz once (uuids U36, embs float16, signature), <prefix>.errors.log and <prefix>.done holding the signature; source param added with shards (Task 5)
+def pending_prefixes(out_dir: Path, signature: str) -> list[str]  # prefixes not done by this signature; source param added with shards (Task 5)
 
 # build_index.py   CLI: python -m pipeline.retrieval.build_index --model NAME [--M 32] [--ef-construction 200]
-def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construction: int) -> int   # verifies dims; writes index.hnsw + labels.npy (U36)
+def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construction: int) -> int   # verifies dims and one shared signature; writes index.hnsw + labels.npy (U36) + signature.txt
 
 # identify.py   CLI: python -m pipeline.retrieval.identify photo.jpg --model NAME [--k 5] [--views 1|3]
 @dataclass
@@ -265,6 +265,7 @@ Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_vie
 - CLIP loads as `ViT-B-32-quickgelu`, which matches how OpenAI trained the weights. The 2025-11 shards were built with plain `ViT-B-32` (GELU), so QuickGELU queries reach only 0.92 to 0.96 against their own covers. Never mix the two in one index.
 - The six new backbones take their preprocessing from their model cards or reference code. DINOv3 resizes the whole image to a square with no crop; SigLIP2 does the same at 256 px; PE-Core does the same at 384 px with bilinear resizing, as Meta's reference code and training did (timm's config would crop instead). DINOv3 runs at any multiple of 16 px through `load_embedder(input_px=...)`; the others run at their native size only.
 - ViTs embed with the final-norm CLS token and ConvNeXt with its normed global average pool. The plan's `pool="cls+mean"` option has no caller yet; the frozen sweep adds it if it wants to compare.
+- Every shard and index records its embedder's signature (name, input px and a hash of the preprocessing). build_index refuses mixed shards and identify refuses an index from another signature, so a preprocessing change can't silently reuse old vectors; eval keys its gallery cache by signature. A change to weights or pooling doesn't alter the signature: give it a new model name. Shards from before signatures (the prefix 00 and 01 smoke runs) need re-embedding before use.
 - torch 2.8's MPS backend has two bugs these models hit: PE-Core's attention pool aborts the process, and the fused `layer_norm` is wrong on flat areas of covers (DINOv3 ConvNeXt came out at cosine 0.995 to CPU). `embedders.py` works around both; all seven match CPU at 1.000000 on 200 covers. Recheck MPS against CPU after any torch upgrade.
 - timm moved to 1.0.30: 1.0.19 cannot download from huggingface_hub 2.x. CLIP vectors are bit-identical across the upgrade.
 - `query_views` applies EXIF orientation first, so a portrait phone photo is not embedded sideways.

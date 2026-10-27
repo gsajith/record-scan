@@ -8,6 +8,8 @@ set HF_TOKEN.
 """
 
 import functools
+import hashlib
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -47,8 +49,8 @@ def exact_layer_norms(model: torch.nn.Module) -> None:
     formula on MPS matches float64 to 1e-7."""
     for mod in model.modules():
         if isinstance(mod, torch.nn.LayerNorm):
-            # _layer_norm handles one normalized dim, with weight and bias both or neither
-            assert len(mod.normalized_shape) == 1 and (mod.weight is None) == (mod.bias is None), mod
+            if len(mod.normalized_shape) != 1 or (mod.weight is None) != (mod.bias is None):
+                raise RuntimeError(f"Can't replace {mod!r}: needs one normalized dim, and weight and bias both or neither")
             mod.forward = functools.partial(_layer_norm, mod)
 
 
@@ -67,10 +69,22 @@ def _layer_norm(mod: torch.nn.LayerNorm, x: torch.Tensor) -> torch.Tensor:
 PAD_GRAY = (128, 128, 128)
 
 
+def preprocess_signature(name: str, input_px: int, preprocess: object) -> str:
+    """Name, input size and a hash of the preprocessing, such as "pe-core-s16-384px-7b171a50".
+
+    Every shard and index records the signature of the embedder that wrote it, and identify
+    refuses an index from another one, so vectors made with old preprocessing are never mixed
+    with new ones. A change to weights or pooling doesn't show up here: give that a new name.
+    """
+    text = re.sub(r" at 0x[0-9a-f]+", "", repr(preprocess))  # function reprs carry a memory address
+    return f"{name}-{input_px}px-{hashlib.sha1(text.encode()).hexdigest()[:8]}"
+
+
 class Embedder(Protocol):
     name: str
     dim: int
     input_px: int
+    signature: str  # see preprocess_signature
 
     def preprocess(self, img: Image.Image) -> torch.Tensor: ...
 
@@ -98,6 +112,7 @@ class ClipEmbedder:
         if device == "mps":
             exact_layer_norms(self.model)
         self.dim = self.model.visual.output_dim
+        self.signature = preprocess_signature(self.name, self.input_px, self._preprocess)
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._preprocess(img.convert("RGB"))
@@ -130,6 +145,7 @@ class HfEmbedder:
         if device == "mps":
             exact_layer_norms(self.model)
         self._siglip = name.startswith("siglip")
+        self.signature = preprocess_signature(name, input_px, self._processor)
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._processor(images=img.convert("RGB"), return_tensors="pt")["pixel_values"][0]
@@ -173,6 +189,7 @@ class PeCoreEmbedder:
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
         ])
+        self.signature = preprocess_signature(self.name, self.input_px, self._preprocess)
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._preprocess(img.convert("RGB"))
