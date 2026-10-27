@@ -12,7 +12,7 @@
 
 **Contents:** Global constraints, Review focus, Decisions, What only Gautham can do (tasks and checkpoints), Layout, Phase A (Tasks 1 to 9), Phases B to D (outline), Data you can delete and when, Self-review notes.
 
-**Status:** Tasks 1 and 2 done. Task 6 code is in; its full cover fetch runs until about 2026-10-27, then a catalog rebuild finishes it. Task 3 is built; its checkpoint, an hour of real labeling (#13), is next. Task 4: CLIP path and eval in; Gautham signed off the eval rules (#17) with albums as release groups; #18 (six backbones) in progress.
+**Status:** Tasks 1 and 2 done. Task 6 code is in; its full cover fetch runs until about 2026-10-27, then a catalog rebuild finishes it. Task 3 is built; its checkpoint, an hour of real labeling (#13), is next. Task 4 done: seven backbones, identify and eval; Gautham signed off the eval rules (#17) with albums as release groups.
 
 ## Global constraints
 
@@ -211,7 +211,7 @@ This merges the recovery plan's Tasks 4, 5 and 7 with the report's changes: seve
 
 **Files:**
 - Create: `pipeline/retrieval/embedders.py`, `pipeline/retrieval/embed.py`, `pipeline/retrieval/identify.py`, `pipeline/retrieval/eval.py`, `pipeline/tests/test_embedders.py`, `pipeline/tests/test_embed.py`, `pipeline/tests/test_index_identify.py`, `pipeline/tests/test_eval.py`
-- Modify: `pipeline/retrieval/build_index.py` (rewrite), `pipeline/requirements.txt` (+ `transformers==4.55.4`, `imagehash`, `webdataset`, `pyarrow`, `faiss-cpu==1.12.0`, `huggingface_hub`)
+- Modify: `pipeline/retrieval/build_index.py` (rewrite), `pipeline/requirements.txt` (+ `transformers==5.19.0` (4.55.4 predates DINOv3), `imagehash`, `webdataset`, `pyarrow`, `faiss-cpu==1.12.0`, `huggingface_hub`)
 - Delete: `pipeline/retrieval/embed_batch.py`, `pipeline/retrieval/query.py`
 
 **Interfaces (produces):**
@@ -256,13 +256,17 @@ def run_eval(model: str, set_name: str, distractors: int, views: int, px: int | 
 ```
 Per-tag recall is reported with its count so a slice of three photos is visibly weak. `micro_ap` follows SSCD: positives and negatives ranked by top-1 score, average precision of "is a positive and hit".
 
-- [ ] Step 1: Failing tests: `test_each_embedder_unit_vectors` (parametrized, `@pytest.mark.slow`, two fixture images, shape and norm; skips gated models when `HF_TOKEN` is unset with a clear message), `test_query_views_three_sizes`, `test_embed_prefix_skips_corrupt_and_resumes`, `test_build_index_and_identify_roundtrip` (synthetic vectors, releases of one release group collapse), `test_is_hit_rules`, `test_eval_report_metrics_and_slices` (hand-built rows), `test_load_eval_set_uses_eval_split_only`.
-- [ ] Step 2: Run, FAIL. Step 3: Implement. Step 4: all pass; smoke: build an index from the 2025-11 shards (`clip-vit-b-32-aug13`, allow_pickle, cast uuids) and identify a CAA `front-500` for a uuid in prefix 00.
-- [ ] Step 5: `git rm` the two old scripts. Commit `feat(pipeline): retrieval core with seven backbones, query views and slice eval`.
+- [x] Step 1: Failing tests: `test_each_embedder_unit_vectors` (parametrized, `@pytest.mark.slow`, two fixture images, shape and norm; skips gated models when `HF_TOKEN` is unset with a clear message), `test_query_views_three_sizes`, `test_embed_prefix_skips_corrupt_and_resumes`, `test_build_index_and_identify_roundtrip` (synthetic vectors, releases of one release group collapse), `test_is_hit_rules`, `test_eval_report_metrics_and_slices` (hand-built rows), `test_load_eval_set_uses_eval_split_only`.
+- [x] Step 2: Run, FAIL. Step 3: Implement. Step 4: all pass; smoke: build an index from the 2025-11 shards (`clip-vit-b-32-aug13`, allow_pickle, cast uuids) and identify a CAA `front-500` for a uuid in prefix 00.
+- [x] Step 5: `git rm` the two old scripts. Commit `feat(pipeline): retrieval core with seven backbones, query views and slice eval`.
 
-Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_views`, `embed.py`, the `build_index.py` rewrite and `identify.py`, with their tests. The smoke run returned each of three prefix-00 covers first, and a phone photo of The Dark Side of the Moon came back first; numbers in `docs/results/2026-10-25-clip-baseline-smoke.md`. #16 (eval) and #18 (six more backbones) remain, so the steps above stay open. Notes for them:
+Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_views`, `embed.py`, the `build_index.py` rewrite and `identify.py`, with their tests. The smoke run returned each of three prefix-00 covers first, and a phone photo of The Dark Side of the Moon came back first; numbers in `docs/results/2026-10-25-clip-baseline-smoke.md`. #18 added the other six backbones (smoke numbers in `docs/results/2026-10-27-backbone-smoke.md`), and #16 the eval, so Task 4 is complete. Steps 1 to 5 landed as those three PRs, not one commit. Notes:
 - The two old scripts were already removed in d3c1455, so Step 5 has nothing left to `git rm`.
 - CLIP loads as `ViT-B-32-quickgelu`, which matches how OpenAI trained the weights. The 2025-11 shards were built with plain `ViT-B-32` (GELU), so QuickGELU queries reach only 0.92 to 0.96 against their own covers. Never mix the two in one index.
+- The six new backbones take their preprocessing from their model cards or reference code. DINOv3 resizes the whole image to a square with no crop; SigLIP2 does the same at 256 px; PE-Core does the same at 384 px with bilinear resizing, as Meta's reference code and training did (timm's config would crop instead). DINOv3 runs at any multiple of 16 px through `load_embedder(input_px=...)`; the others run at their native size only.
+- ViTs embed with the final-norm CLS token and ConvNeXt with its normed global average pool. The plan's `pool="cls+mean"` option has no caller yet; the frozen sweep adds it if it wants to compare.
+- torch 2.8's MPS backend has two bugs these models hit: PE-Core's attention pool aborts the process, and the fused `layer_norm` is wrong on flat areas of covers (DINOv3 ConvNeXt came out at cosine 0.995 to CPU). `embedders.py` works around both; all seven match CPU at 1.000000 on 200 covers. Recheck MPS against CPU after any torch upgrade.
+- timm moved to 1.0.30: 1.0.19 cannot download from huggingface_hub 2.x. CLIP vectors are bit-identical across the upgrade.
 - `query_views` applies EXIF orientation first, so a portrait phone photo is not embedded sideways.
 - `identify` widens its search past k*10 neighbours when one big group, such as the 38 Abbey Road releases, fills them and fewer than k albums come back.
 - `embed.py` reads the drive only and has no `--source shards`, `--uuids` or `--px` yet. Tasks 5 and 7 add them along with their first callers. If the drive drops mid-prefix, it exits without marking the prefix done.
