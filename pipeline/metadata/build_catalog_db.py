@@ -79,6 +79,7 @@ def build(releases_jsonl: Path, artists_json: Path, covers_jsonl: Path, out: Pat
             db.executemany("INSERT INTO releases (rowid, mbid, title, primary_artist, artist_ids_json, format,"
                            " cover_id, release_group, album_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", release_rows)
             db.execute("CREATE INDEX releases_album_key ON releases (album_key)")
+            db.execute("CREATE INDEX releases_release_group ON releases (release_group)")
             db.executemany("INSERT INTO covers VALUES (?, ?, ?, ?)",
                            ((c["mbid"], c["cover_id"], c["file"], int(c["primary"])) for c in covers))
             db.execute("CREATE INDEX covers_mbid ON covers (mbid)")
