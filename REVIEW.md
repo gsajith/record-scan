@@ -18,7 +18,7 @@ What a reviewer of this repo checks, on top of general correctness. Every review
 
 ## Human approval
 
-An agent may not merge a PR whose diff touches any of these. It stops and hands the PR to Gautham, whatever the reviewer's verdict. A bug here is expensive or hard to notice. The list guards behavior, not file names: when that behavior moves to a new file, add the file.
+A PR whose diff touches any of these merges only on Gautham's go-ahead, whatever the reviewer's verdict. Without it, an agent hands the PR to him. A bug here is expensive or hard to notice. The list guards behavior, not file names: when that behavior moves to a new file, add the file.
 
 - `.github/` (CI and the PR template)
 - `pipeline/requirements*.txt`, `pipeline/requirements*.lock`, every `package.json` and `package-lock.json` (dependencies)

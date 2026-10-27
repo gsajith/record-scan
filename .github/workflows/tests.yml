@@ -19,6 +19,10 @@ jobs:
       # The reviewer evals copy REVIEW.md into old commits, so a PR or issue number in its focus
       # list would hand the reviewer the answer
       - run: |
+          if ! grep -q '^## Focus' REVIEW.md; then
+            echo "::error file=REVIEW.md::No '## Focus' section to check. Update this job if it moved."
+            exit 1
+          fi
           if sed -n '/^## Focus/,$p' REVIEW.md | grep -nE '#[0-9]+'; then
             echo "::error file=REVIEW.md::The focus list names a PR or issue number. Describe the bug class instead."
             exit 1

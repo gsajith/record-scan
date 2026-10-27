@@ -6,7 +6,7 @@ Issues live in GitHub Issues on gsajith/record-scan, managed with the `gh` CLI. 
 
 A ticket is unblocked when every issue in its native `blocked_by` list is closed. Read that list (`gh api repos/gsajith/record-scan/issues/<n>/dependencies/blocked_by`) before calling a ticket unblocked.
 
-A ticket being worked has an assignee and the `in-progress-by-agent` label, and a ticket with either is taken. Claim one before starting it: `gh issue edit <n> --add-assignee @me --add-label in-progress-by-agent`.
+A ticket being worked has an assignee and the `in-progress-by-agent` label, and a ticket with either is taken. Claim one before starting it: `gh issue edit <n> --add-assignee @me --add-label in-progress-by-agent --remove-label ready-for-agent`.
 
 Phase A of `docs/superpowers/plans/2026-10-24-identifier-plan.md` is tracked as issues #7 to #33, each citing its plan task. Keep the two in sync: when a plan task lands, close its issues, tick the plan's checkboxes and update its ledger in the same session, whichever one you started from.
 
