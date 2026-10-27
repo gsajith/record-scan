@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Release } from "@/lib/catalog";
 import { hotkeyAction, KIND_KEYS, TAG_KEYS } from "@/lib/hotkeys";
+import { tagsForNextFrame } from "@/lib/carry";
 import { KINDS, SETS, TAGS, type Kind, type SetName, type Split, type Tag } from "@/lib/labels";
 import type { QueueItem } from "@/lib/queue";
 import styles from "./page.module.css";
@@ -64,8 +65,8 @@ export default function LabelerPage() {
   const [results, setResults] = useState<Result[]>([]);
   const [active, setActive] = useState(0);
   const [searchError, setSearchError] = useState<string | null>(null);
-  // The album, kind and tags carry over between frames of the same video, so a flipping
-  // video's crate tag is set once
+  // The album, kind and the video's crate or rack tag carry over between frames of the same
+  // video (lib/carry.ts); other tags describe one frame
   const [picked, setPicked] = useState<Result | null>(null);
   const [kind, setKind] = useState<Kind>("positive");
   const [tags, setTags] = useState<Tag[]>([]);
@@ -78,8 +79,9 @@ export default function LabelerPage() {
   const [focusSearchTick, setFocusSearchTick] = useState(0);
   const focusSearch = useCallback(() => setFocusSearchTick((n) => n + 1), []);
 
-  // Notes and the search describe one photo, so they start empty on the next
+  // Notes, the search and per-frame tags describe one photo, so they start fresh on the next
   const clearPerPhoto = useCallback(() => {
+    setTags(tagsForNextFrame);
     setNotes("");
     setQuery("");
     setResults([]);
