@@ -16,7 +16,7 @@
 
 ## Global constraints
 
-- Everything from the recovery plan's Global constraints still applies: never `git add` data, agents delete nothing but regenerable artifacts, Conventional Commits, one venv at `pipeline/.venv`, `require_image_root()` before touching the drive, never `os.makedirs` under `/Volumes`, TypeScript without `any`.
+- Everything from the recovery plan's Global constraints still applies: never `git add` data, agents delete nothing but regenerable artifacts, Conventional Commits, one venv at `pipeline/.venv`, synced from `pipeline/requirements.lock` (how-to atop `requirements.txt`), `require_image_root()` before touching the drive, never `os.makedirs` under `/Volumes`, TypeScript without `any`.
 - Data layout under `RS_DATA_DIR` (default `~/Projects/record-scan-data`): `metadata/` (JSON, `catalog.sqlite`), `gold/` and `wild/` (each with `photos/`, `inbox/`, `labels.jsonl`, and `sources.jsonl` recording each photo's inbox frame or web address and, for wild, its fingerprint), `gallery256/` (shards, hashes, clusters), `musicbrainz-dump-<date>/` (downloaded dumps), `embeddings/<model>/`, `exports/`, `lightbank/`. Config exposes each as a constant.
 - Pipeline modules read `config.X` at call time, never `from pipeline.config import X` at import. Tests generate fixtures into `tmp_path`; no JSON or image fixtures are committed except tiny generated ones under `pipeline/tests/fixtures/` created by `conftest.py`.
 - One label record format, defined once in `pipeline/gold/labels.py` and mirrored in `annotator/lib/labels.ts`, with a shared test vector so the two never drift.
