@@ -32,6 +32,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Measured numbers live in the repo, one file per run
 RESULTS_DIR = REPO_ROOT / "docs" / "results"
 
+# Every request to coverartarchive.org or MusicBrainz sends this (the plan's External services rule)
+USER_AGENT = "RecordScan/0.1 (gsajith@umich.edu)"
+
 # MusicBrainz release ids, lowercase. Checked before an id goes into a URL or a path.
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 

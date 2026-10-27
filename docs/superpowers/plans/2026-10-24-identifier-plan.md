@@ -12,11 +12,11 @@
 
 **Contents:** Global constraints, Review focus, Decisions, What only Gautham can do (tasks and checkpoints), Layout, Phase A (Tasks 1 to 9), Phases B to D (outline), Data you can delete and when, Self-review notes.
 
-**Status:** Tasks 1 and 2 done. Task 6 code is in; its full cover fetch runs until about 2026-10-27, then a catalog rebuild finishes it. Task 3 is built; its checkpoint, an hour of real labeling (#13), is next. Task 4 done: seven backbones, identify and eval; Gautham signed off the eval rules (#17) with albums as release groups.
+**Status:** the open issues among #7 to #33 (`gh issue list --state open`) and each task's checkboxes and Progress notes. Status lives there, so parallel sessions don't all edit one line.
 
 ## Global constraints
 
-- Everything from the recovery plan's Global constraints still applies: never `git add` data, agents delete nothing but regenerable artifacts, Conventional Commits, one venv at `pipeline/.venv`, `require_image_root()` before touching the drive, never `os.makedirs` under `/Volumes`, TypeScript without `any`.
+- Everything from the recovery plan's Global constraints still applies: never `git add` data, agents delete nothing but regenerable artifacts, Conventional Commits, one venv at `pipeline/.venv`, synced from `pipeline/requirements.lock` (how-to atop `requirements.txt`), `require_image_root()` before touching the drive, never `os.makedirs` under `/Volumes`, TypeScript without `any`.
 - Data layout under `RS_DATA_DIR` (default `~/Projects/record-scan-data`): `metadata/` (JSON, `catalog.sqlite`), `gold/` and `wild/` (each with `photos/`, `inbox/`, `labels.jsonl`, and `sources.jsonl` recording each photo's inbox frame or web address and, for wild, its fingerprint), `gallery256/` (shards, hashes, clusters), `musicbrainz-dump-<date>/` (downloaded dumps), `embeddings/<model>/`, `exports/`, `lightbank/`. Config exposes each as a constant.
 - Pipeline modules read `config.X` at call time, never `from pipeline.config import X` at import. Tests generate fixtures into `tmp_path`; no JSON or image fixtures are committed except tiny generated ones under `pipeline/tests/fixtures/` created by `conftest.py`.
 - One label record format, defined once in `pipeline/gold/labels.py` and mirrored in `annotator/lib/labels.ts`, with a shared test vector so the two never drift.
@@ -36,6 +36,7 @@
 4. A corrupt JPEG or an unmounted drive mid-run: the gallery pass logs and skips the file, finishes the prefix, and resumes per prefix on rerun; it never creates folders under `/Volumes`. Test in Task 5.
 5. Lost or clobbered covers in a catalog update: the cover fetcher never overwrites or deletes a file on the drive, keeps an old cover while it is still upstream, backs off on 503, and resumes from its lookup log after a crash without repeating a request. Test in Task 6.
 6. Metric gaming: a model task that changes the hit rule, the split, seeds or test assertions so that a number improves without the model improving. Reviewers check for it in every task from Task 4 on; the eval-integrity constraint forbids it in the same commit.
+7. Stale derived artifacts: anything cached or marked done (shards, `.done` markers, indexes, eval gallery caches, resume logs) is keyed by everything that produced it, so changing the producer (preprocessing, weights, input size, the cover list) makes the old artifact rebuild or get refused. Reviewers check every diff that changes a producer for a cache that would still be reused. PRs #43 and #45 each shipped a miss of this kind.
 
 ---
 
@@ -266,7 +267,7 @@ Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_vie
 - The six new backbones take their preprocessing from their model cards or reference code. DINOv3 resizes the whole image to a square with no crop; SigLIP2 does the same at 256 px; PE-Core does the same at 384 px with bilinear resizing, as Meta's reference code and training did (timm's config would crop instead). DINOv3 runs at any multiple of 16 px through `load_embedder(input_px=...)`; the others run at their native size only.
 - ViTs embed with the final-norm CLS token and ConvNeXt with its normed global average pool. The plan's `pool="cls+mean"` option has no caller yet; the frozen sweep adds it if it wants to compare.
 - Every shard and index records its embedder's signature (name, input px and a hash of the preprocessing). build_index refuses mixed shards and identify refuses an index from another signature, so a preprocessing change can't silently reuse old vectors; eval keys its gallery cache by signature. A change to weights or pooling doesn't alter the signature: give it a new model name. Shards from before signatures (the prefix 00 and 01 smoke runs) need re-embedding before use.
-- torch 2.8's MPS backend has two bugs these models hit: PE-Core's attention pool aborts the process, and the fused `layer_norm` is wrong on flat areas of covers (DINOv3 ConvNeXt came out at cosine 0.995 to CPU). `embedders.py` works around both; all seven match CPU at 1.000000 on 200 covers. Recheck MPS against CPU after any torch upgrade.
+- torch 2.8's MPS backend has two bugs these models hit: PE-Core's attention pool aborts the process, and the fused `layer_norm` is wrong on flat areas of covers (DINOv3 ConvNeXt came out at cosine 0.995 to CPU). `embedders.py` works around both; all seven match CPU at 1.000000 on 200 covers. `test_each_embedder_matches_cpu_on_mps` (slow) checks it on flat and textured images; run it after any torch upgrade.
 - timm moved to 1.0.30: 1.0.19 cannot download from huggingface_hub 2.x. CLIP vectors are bit-identical across the upgrade.
 - `query_views` applies EXIF orientation first, so a portrait phone photo is not embedded sideways.
 - `identify` widens its search past k*10 neighbours when one big group, such as the 38 Abbey Road releases, fills them and fewer than k albums come back.

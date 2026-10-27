@@ -35,7 +35,6 @@ import requests
 from pipeline import config
 from pipeline.metadata.catalog import Cover
 
-USER_AGENT = "RecordScan/0.1 (gsajith@umich.edu)"
 RETRY_STATUS = {429, 500, 502, 503, 504}
 # Connections that fail before or while the body arrives; all worth a retry
 DROPPED = (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError,
@@ -385,7 +384,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="print the backlog and exit")
     args = parser.parse_args()
     session = requests.Session()
-    session.headers["User-Agent"] = USER_AGENT
+    session.headers["User-Agent"] = config.USER_AGENT
     adapter = requests.adapters.HTTPAdapter(pool_maxsize=args.workers)
     session.mount("https://", adapter)
     session.mount("http://", adapter)  # archive.org redirects to its storage servers

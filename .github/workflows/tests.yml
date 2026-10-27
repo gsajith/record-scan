@@ -1,0 +1,54 @@
+name: Tests
+
+# The fast pipeline tests and the labeler's lint, typecheck and tests, on every PR and on main.
+# Slow tests (model downloads) and MPS checks run on the Mac only.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pipeline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0, pinned: a third-party action
+        with:
+          python-version: "3.12"
+          # A new suffix drops caches holding an hnswlib built with -march=native (see below)
+          cache-suffix: hnswlib-portable
+          cache-dependency-glob: pipeline/requirements*.lock
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # Fails when someone updates requirements.lock but not requirements-ci.lock
+      - run: diff <(grep -oE '^[a-z0-9_.-]+==[^ ]+' requirements.lock | sort) <(grep -oE '^[a-z0-9_.-]+==[^ ]+' requirements-ci.lock | sed 's/+cpu//' | sort)
+      # requirements-ci.lock: the Mac lock's versions, resolved for Linux with CPU torch (torch from
+      # PyPI on Linux pulls in gigabytes of CUDA libraries)
+      # hnswlib 0.8.0 has no Linux wheel for Python 3.12 and builds with -march=native by default.
+      # A build cached from one runner then dies with "Illegal instruction" on another CPU.
+      - run: uv venv && uv pip install --torch-backend cpu --require-hashes -r requirements-ci.lock
+        env:
+          HNSWLIB_NO_NATIVE: "1"
+      - run: .venv/bin/python -m pytest -q -m "not slow"
+
+  annotator:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: annotator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: annotator/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm test
