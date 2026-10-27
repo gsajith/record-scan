@@ -61,7 +61,7 @@ describe("ingestImage", () => {
 describe("appendLabel", () => {
   const sha1 = "86f7e437faa5a7fce15d1ddcb9eaeaea377667b8";
   const label: Label = {
-    file: `photos/${sha1}.jpg`, sha1, kind: "negative", mbid: null, tags: [], source_url: null,
+    file: `photos/${sha1}.jpg`, sha1, kind: "negative", mbid: null, tags: [], source_url: null, group: null,
     license: "own", split: "eval", notes: "", labeled_at: "2026-10-25T04:00:00Z",
   };
 
@@ -82,7 +82,7 @@ describe("appendLabel line separators", () => {
     const sha1 = "86f7e437faa5a7fce15d1ddcb9eaeaea377667b8";
     const notes = "glare\u2028left\u2029corner\u0085here";
     appendLabel(setDir, {
-      file: `photos/${sha1}.jpg`, sha1, kind: "negative", mbid: null, tags: [], source_url: null,
+      file: `photos/${sha1}.jpg`, sha1, kind: "negative", mbid: null, tags: [], source_url: null, group: null,
       license: "own", split: "eval", notes, labeled_at: "2026-10-25T04:00:00Z",
     });
     const text = readFileSync(join(setDir, "labels.jsonl"), "utf8");
@@ -97,7 +97,7 @@ describe("countLabels", () => {
   const simSha1 = "e9d71f5ee7c92d6dc9e92ffdad17b8bd49418f98";
   const wild = (sha1: string, split: "eval" | "sim", tags: Label["tags"] = []): Label => ({
     file: `photos/${sha1}.jpg`, sha1, kind: "negative", mbid: null, tags, license: "cc0",
-    source_url: "https://example.com/photo", split, notes: "", labeled_at: "2026-10-25T04:00:00Z",
+    source_url: "https://example.com/photo", group: null, split, notes: "", labeled_at: "2026-10-25T04:00:00Z",
   });
 
   it("counts labeled photos per split, a re-labeled photo once", () => {

@@ -28,15 +28,30 @@ export const LabelSchema = z.strictObject({
   tags: z.array(z.enum(TAGS)),
   source_url: z.url().nullable(),
   license: z.enum(LICENSES),
+  group: z.string().min(1).nullable(), // the source a wild photo shares a half with, see splitFor
   split: z.enum(["eval", "sim"]),
   notes: z.string(),
   labeled_at: z.string(), // ISO 8601 UTC
 });
 export type Label = z.infer<typeof LabelSchema>;
 
-/** Which half a photo belongs to, fixed by its hash. Gold photos are never used for tuning. */
-export function splitFor(set: SetName, sha1: string): Split {
+/** 32-bit FNV-1a over UTF-8, written identically in Python (fnv1a32 in labels.py). */
+export function fnv1a32(text: string): number {
+  let h = 0x811c9dc5;
+  for (const byte of new TextEncoder().encode(text)) {
+    h = Math.imul(h ^ byte, 0x01000193) >>> 0;
+  }
+  return h;
+}
+
+/**
+ * Which half a photo belongs to. Gold photos are never used for tuning. A wild photo with a
+ * group (the YouTube channel or creator its video came from) takes the group's half, so frames
+ * of one store, light and camera never land in both halves; without one, its own hash decides.
+ */
+export function splitFor(set: SetName, sha1: string, group: string | null = null): Split {
   if (set === "gold") return "eval";
+  if (group !== null) return fnv1a32(group) % 2 === 0 ? "sim" : "eval";
   return parseInt(sha1.slice(0, 8), 16) % 2 === 0 ? "sim" : "eval";
 }
 
@@ -48,8 +63,8 @@ export function checkLabel(set: SetName, input: unknown): { label: Label } | { e
     return { error: `${issue.path.join(".") || "label"}: ${issue.message}` };
   }
   const label = parsed.data;
-  if (label.split !== splitFor(set, label.sha1)) {
-    return { error: `split ${label.split} does not match the hash rule for ${label.sha1}` };
+  if (label.split !== splitFor(set, label.sha1, label.group)) {
+    return { error: `split ${label.split} does not match the rule for ${label.sha1} in group ${label.group}` };
   }
   if (label.kind === "positive" && label.mbid === null) return { error: "a positive label needs an mbid" };
   if (label.kind !== "positive" && label.mbid !== null) {

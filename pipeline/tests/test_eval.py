@@ -66,7 +66,7 @@ def add_label(set_dir, sha1, kind, mbid=None, tags=()):
     wild = set_dir.name == "wild"
     append_label(set_dir, Label(
         file=f"photos/{sha1}.jpg", sha1=sha1, kind=kind, mbid=mbid, tags=list(tags),
-        source_url="https://example.org/photo" if wild else None, license="cc0" if wild else "own",
+        source_url="https://example.org/photo" if wild else None, license="cc0" if wild else "own", group=None,
         split=split_for(set_dir.name, sha1), notes="", labeled_at=now_iso(),
     ))
 

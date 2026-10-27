@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkLabel, splitFor } from "./labels";
+import { checkLabel, fnv1a32, splitFor } from "./labels";
 
 // Copied from SPLIT_VECTORS in pipeline/tests/test_labels.py: both implementations must agree.
 const SPLIT_VECTORS: [string, "eval" | "sim"][] = [
@@ -10,9 +10,21 @@ const SPLIT_VECTORS: [string, "eval" | "sim"][] = [
   ["54fd1711209fb1c0781092374132c66e79e2241b", "eval"],
 ];
 
+// Copied from FNV_VECTORS in pipeline/tests/test_labels.py: published FNV-1a 32-bit values.
+const FNV_VECTORS: [string, number, "eval" | "sim"][] = [
+  ["", 0x811c9dc5, "eval"],
+  ["a", 0xe40c292c, "sim"],
+  ["foobar", 0xbf9cf968, "sim"],
+];
+
 describe("splitFor", () => {
   it.each(SPLIT_VECTORS)("puts wild photo %s in %s, like the Python rule", (sha1, expected) => {
     expect(splitFor("wild", sha1)).toBe(expected);
+  });
+
+  it.each(FNV_VECTORS)("puts every photo of group %j in its group's half", (group, hash, expected) => {
+    expect(fnv1a32(group)).toBe(hash);
+    expect(new Set(SPLIT_VECTORS.map(([sha1]) => splitFor("wild", sha1, group)))).toEqual(new Set([expected]));
   });
 });
 
@@ -28,6 +40,7 @@ const wildLabel = {
   tags: ["glare"],
   source_url: "https://www.flickr.com/photos/x/1",
   license: "cc-by",
+  group: null,
   split: "eval",
   notes: "",
   labeled_at: "2026-10-25T04:00:00Z",
@@ -50,6 +63,12 @@ describe("checkLabel", () => {
     expect(checkLabel("wild", { ...wildLabel, split: "sim" })).toMatchObject({
       error: expect.stringContaining("split"),
     });
+  });
+
+  it("takes the split from the group when there is one", () => {
+    // This photo's own hash says eval, but group "a" is in sim
+    expect(checkLabel("wild", { ...wildLabel, group: "a" })).toMatchObject({ error: expect.stringContaining("split") });
+    expect(checkLabel("wild", { ...wildLabel, group: "a", split: "sim" })).toMatchObject({ label: { split: "sim" } });
   });
 
   it("ties the mbid to the kind: a positive needs one, a negative must not have one", () => {

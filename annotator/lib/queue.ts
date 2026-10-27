@@ -20,6 +20,16 @@ function videoOf(frameName: string): string {
   return frameName.replace(/\.[^.]+$/, "").replace(/-\d{2}$/, "");
 }
 
+/**
+ * The source group in a clip name "<group>~<video>", such as "yt-UC123~abc-s01" for a YouTube
+ * channel's video. Every frame of a group lands in the same half (splitFor).
+ */
+function groupOfFrame(frameName: string): string | null {
+  const video = videoOf(frameName);
+  const cut = video.indexOf("~");
+  return cut > 0 ? video.slice(0, cut) : null;
+}
+
 /** Unlabeled photos, oldest first, so frames keep the order they came in. */
 function pendingPhotos(setDir: string, labeled: Map<string, unknown>): string[] {
   let names: string[];
@@ -61,7 +71,8 @@ async function takeFromInbox(setDir: string, name: string): Promise<void> {
     dest = "unreadable"; // move it aside so one bad file can't block the queue
   }
   mkdirSync(join(inbox, dest), { recursive: true });
-  if (sha1) appendSource(setDir, { sha1, frame: name });
+  const group = groupOfFrame(name);
+  if (sha1) appendSource(setDir, { sha1, frame: name, ...(group && { group }) });
   try {
     renameSync(join(inbox, name), join(inbox, dest, name));
   } catch (e) {
