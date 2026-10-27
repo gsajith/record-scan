@@ -28,16 +28,32 @@ class Label:
     mbid: str | None
     tags: list[str]
     source_url: str | None
+    group: str | None  # the source a wild photo shares a half with (a YouTube channel), else None
     license: str
-    split: str  # "eval" or "sim", always split_for(set, sha1)
+    split: str  # "eval" or "sim", always split_for(set, sha1, group)
     notes: str
     labeled_at: str  # ISO 8601 UTC
 
 
-def split_for(set_name: str, sha1: str) -> str:
-    """Which half a photo belongs to, fixed by its hash. Gold photos are never used for tuning."""
+def fnv1a32(text: str) -> int:
+    """32-bit FNV-1a over UTF-8: a hash small enough to write identically in TypeScript."""
+    h = 0x811C9DC5
+    for byte in text.encode("utf-8"):
+        h = ((h ^ byte) * 0x01000193) & 0xFFFFFFFF
+    return h
+
+
+def split_for(set_name: str, sha1: str, group: str | None = None) -> str:
+    """Which half a photo belongs to. Gold photos are never used for tuning.
+
+    A wild photo with a group (the YouTube channel or creator its video came from) takes the
+    group's half, so frames of one store, light and camera never land in both halves. Without a
+    group, the photo's own hash decides. Ruling: Gautham, 2026-10-27 (plan D9).
+    """
     if set_name == "gold":
         return "eval"
+    if group is not None:
+        return "sim" if fnv1a32(group) % 2 == 0 else "eval"
     return "sim" if int(sha1[:8], 16) % 2 == 0 else "eval"
 
 
@@ -59,8 +75,8 @@ def _validate(label: Label, set_name: str) -> None:
         raise ValueError(f"unknown tags {bad}")
     if label.license not in LICENSES:
         raise ValueError(f"unknown license {label.license!r}")
-    if label.split != split_for(set_name, label.sha1):
-        raise ValueError(f"split {label.split!r} does not match the hash rule for {label.sha1}")
+    if label.split != split_for(set_name, label.sha1, label.group):
+        raise ValueError(f"split {label.split!r} does not match the rule for {label.sha1} in group {label.group!r}")
     if label.kind == "positive" and not (label.mbid and config.is_uuid(label.mbid)):
         raise ValueError("a positive label needs a valid mbid")
     if label.kind != "positive" and label.mbid is not None:

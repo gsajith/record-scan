@@ -5,7 +5,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { nextInQueue } from "./queue";
-import { appendLabel, ingestImage } from "./store";
+import { appendLabel, ingestImage, readSources } from "./store";
 
 function tempSetDir(): string {
   return join(mkdtempSync(join(tmpdir(), "queue-")), "gold");
@@ -19,7 +19,7 @@ function jpeg(color: string): Promise<Buffer> {
 function labelAsNegative(setDir: string, sha1: string) {
   appendLabel(setDir, {
     file: `photos/${sha1}.jpg`, sha1, kind: "negative", mbid: null, tags: [], source_url: null,
-    license: "own", split: "eval", notes: "", labeled_at: "2026-10-25T04:00:00Z",
+    license: "own", group: null, split: "eval", notes: "", labeled_at: "2026-10-25T04:00:00Z",
   });
 }
 
@@ -117,5 +117,20 @@ describe("nextInQueue", () => {
     writeFileSync(join(setDir, "sources.jsonl"), '{"sha1": "trunc\n');
     writeFileSync(join(setDir, "inbox", "abbey-01.jpg"), await jpeg("#456"));
     expect((await nextInQueue(setDir)).next?.video).toBe("abbey");
+  });
+
+  it("records the source group from a clip named <group>~<video>, so its frames share a half", async () => {
+    const setDir = tempSetDir();
+    const inbox = join(setDir, "inbox");
+    mkdirSync(inbox, { recursive: true });
+    writeFileSync(join(inbox, "yt-UC123~abc-s01-01.jpg"), await jpeg("#f0f"));
+    writeFileSync(join(inbox, "plain-01.jpg"), await jpeg("#0ff"));
+
+    const first = await nextInQueue(setDir);
+    const second = await nextInQueue(setDir, [first.next!.sha1]);
+
+    const sources = readSources(setDir);
+    expect(sources.get(second.next!.sha1)?.group).toBe("yt-UC123");
+    expect(sources.get(first.next!.sha1)?.group).toBeUndefined();
   });
 });

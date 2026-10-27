@@ -107,7 +107,13 @@ export async function ingestWild(
  * Where each photo came from, one JSON line per fact in <set>/sources.jsonl: the inbox frame it
  * was taken from, or a wild photo's address and fingerprint.
  */
-export type Source = { sha1: string; frame?: string; source_url?: string; phash?: string };
+// group: the source a frame's video came from, from a clip named <group>~<video> (lib/queue.ts)
+export type Source = { sha1: string; frame?: string; source_url?: string; phash?: string; group?: string };
+
+/** The photo's source group, if its frame came from a clip named <group>~<video>. */
+export function groupOf(setDir: string, sha1: string): string | null {
+  return readSources(setDir).get(sha1)?.group ?? null;
+}
 
 export function appendSource(setDir: string, source: Source): void {
   mkdirSync(setDir, { recursive: true });
