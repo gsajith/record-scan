@@ -6,8 +6,9 @@
 #   uv pip compile requirements.txt -c requirements.lock --python-version 3.12 \
 #     --python-platform x86_64-unknown-linux-gnu --torch-backend cpu --generate-hashes \
 #     --no-header --no-annotate -o requirements-ci.lock
-torch==2.8.0
-torchvision==0.23.0
+# torch 2.9: ExecuTorch 1.x needs it
+torch==2.9.1
+torchvision==0.24.1
 open_clip_torch==3.2.0
 timm==1.0.30
 transformers==5.19.0
@@ -20,6 +21,9 @@ tqdm==4.67.1
 aiohttp==3.12.15
 aiofiles==24.1.0
 requests==2.32.4
+# Phone export (plan Task 8). executorch pins coremltools 9.0 and torchao.
+coremltools==9.0
+executorch==1.0.1
 fastapi
 uvicorn
 python-multipart
