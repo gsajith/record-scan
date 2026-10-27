@@ -28,13 +28,13 @@ def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construc
     signatures = set()
     for shard in shards:
         with np.load(shard) as data:
+            if "signature" not in data:
+                raise SystemExit(f"{shard} predates embedder signatures. Re-embed it.")
+            signatures.add(str(data["signature"]))
             uuids, embs = data["uuids"].astype("U36"), data["embs"]
-            signatures.add(str(data["signature"]) if "signature" in data else None)
         if embs.ndim != 2 or embs.shape[1] != dim or len(uuids) != len(embs):
             raise SystemExit(f"{shard} holds {embs.shape} vectors for {len(uuids)} ids, expected dim {dim}")
         parts.append((uuids, embs))
-    if None in signatures:
-        raise SystemExit(f"Some shards in {out_dir} predate embedder signatures. Re-embed them.")
     if len(signatures) > 1:
         raise SystemExit(f"Shards in {out_dir} come from different preprocessing ({', '.join(sorted(signatures))}). "
                          "Re-embed the old ones.")

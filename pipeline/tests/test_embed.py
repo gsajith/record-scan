@@ -46,7 +46,7 @@ def test_embed_prefix_skips_corrupt_and_resumes(tmp_path, reload_config):
     (out / "00.tmp.npz").write_bytes(b"left by a run that crashed mid-prefix")
     embedder = MeanColorEmbedder()
 
-    assert pending_prefixes(out) == ["00", "01"]
+    assert pending_prefixes(out, embedder.signature) == ["00", "01"]
     assert embed_prefix("00", embedder, out, batch=1, workers=2) == 2
 
     shard = np.load(out / "00.npz")
@@ -62,7 +62,7 @@ def test_embed_prefix_skips_corrupt_and_resumes(tmp_path, reload_config):
 
     # The finished prefix is skipped on rerun; only 01 is left
     calls = embedder.calls
-    assert pending_prefixes(out) == ["01"]
+    assert pending_prefixes(out, embedder.signature) == ["01"]
     assert embed_prefix("00", embedder, out, batch=1, workers=2) == 0
     assert embedder.calls == calls
 
@@ -84,3 +84,18 @@ def test_embed_prefix_refuses_to_finish_when_the_drive_drops(tmp_path, reload_co
         embed_prefix("00", UnmountingEmbedder(), out, batch=1, workers=1)
     assert not (out / "00.done").exists()
     assert not (out / "00.npz").exists()
+
+
+def test_embed_prefix_redoes_a_prefix_done_by_another_embedder(tmp_path, reload_config):
+    root = tmp_path / "images"
+    (root / "00").mkdir(parents=True)
+    Image.new("RGB", (40, 40), (255, 0, 0)).save(root / "00" / f"{RED}.jpg")
+    reload_config(RS_IMAGE_ROOT=root)
+    out = tmp_path / "emb"
+    out.mkdir()
+    (out / "00.done").write_text("fake-8px-old")  # done before a preprocessing change
+    embedder = MeanColorEmbedder()
+
+    assert pending_prefixes(out, embedder.signature) == ["00"]
+    assert embed_prefix("00", embedder, out, batch=1, workers=1) == 1
+    assert (out / "00.done").read_text() == embedder.signature

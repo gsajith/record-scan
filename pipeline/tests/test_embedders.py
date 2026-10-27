@@ -5,7 +5,14 @@ import pytest
 import torch
 from PIL import Image
 
-from pipeline.retrieval.embedders import BACKBONES, EMBEDDER_NAMES, exact_layer_norms, load_embedder, query_views
+from pipeline.retrieval.embedders import (
+    BACKBONES,
+    EMBEDDER_NAMES,
+    exact_layer_norms,
+    load_embedder,
+    preprocess_signature,
+    query_views,
+)
 
 
 def test_query_views_three_sizes():
@@ -97,3 +104,16 @@ def test_exact_layer_norms_fixes_mps_on_flat_vectors():
 def test_exact_layer_norms_refuses_a_layer_norm_it_cannot_replace():
     with pytest.raises(RuntimeError, match="one normalized dim"):
         exact_layer_norms(torch.nn.LayerNorm((4, 4)))
+
+
+def test_preprocess_signature_ignores_memory_addresses():
+    # CLIP's transform holds a function, whose repr names its address; that differs per process
+    def to_rgb(img):
+        return img
+
+    first = preprocess_signature("m", 224, f"Compose(Lambda({to_rgb!r}))")
+    other_address = preprocess_signature("m", 224, f"Compose(Lambda({to_rgb!r}))".replace(hex(id(to_rgb)), "0x1234abcd"))
+
+    assert first == other_address
+    assert first.startswith("m-224px-")
+    assert preprocess_signature("m", 448, "Compose(Lambda())") != preprocess_signature("m", 224, "Compose(Lambda())")

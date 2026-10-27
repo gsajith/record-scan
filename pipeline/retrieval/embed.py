@@ -3,8 +3,9 @@
     python -m pipeline.retrieval.embed --model NAME (--prefixes 00 01 | --all) [--batch 64] [--workers 6]
 
 Writes config.EMB_DIR/<model>/<prefix>.npz (uuids U36, embs float16, and the embedder's
-signature) and a <prefix>.done
-marker. A rerun skips finished prefixes; an interrupted prefix starts over. Unreadable
+signature) and a <prefix>.done marker holding that signature. A rerun skips prefixes done by
+the same embedder; a prefix done by another one (changed preprocessing) is embedded again,
+and an interrupted prefix starts over. Unreadable
 files go to <prefix>.errors.log in the same folder and are skipped. If the drive goes away
 mid-prefix, the run exits without marking the prefix done.
 """
@@ -67,7 +68,7 @@ def _log_error(errors_log: Path, path: Path, err: Exception | str) -> None:
 def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, batch: int, workers: int) -> int:
     """Embed one prefix folder of the drive. Returns the number of covers written, 0 if already done."""
     done = out_dir / f"{prefix}.done"
-    if done.exists():
+    if _done_by(done, embedder.signature):
         return 0
     root = config.require_image_root()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -86,15 +87,20 @@ def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, batch: int, wor
     with tmp.open("wb") as f:  # a file handle stops numpy from appending another .npz
         np.savez(f, uuids=np.array(uuids, dtype="U36"), embs=embs.astype(np.float16), signature=embedder.signature)
     os.replace(tmp, out_dir / f"{prefix}.npz")
-    done.touch()
+    done.write_text(embedder.signature)
     return len(uuids)
 
 
-def pending_prefixes(out_dir: Path) -> list[str]:
-    """Prefix folders on the drive without a .done marker in out_dir."""
+def _done_by(done: Path, signature: str) -> bool:
+    # Markers from before signatures are empty, so their prefixes count as pending
+    return done.exists() and done.read_text() == signature
+
+
+def pending_prefixes(out_dir: Path, signature: str) -> list[str]:
+    """Prefix folders on the drive not yet embedded in out_dir by the embedder with this signature."""
     root = config.require_image_root()
     prefixes = sorted(p.name for p in root.iterdir() if p.is_dir() and len(p.name) == 2)
-    return [p for p in prefixes if not (out_dir / f"{p}.done").exists()]
+    return [p for p in prefixes if not _done_by(out_dir / f"{p}.done", signature)]
 
 
 def main() -> None:
@@ -109,7 +115,7 @@ def main() -> None:
 
     embedder = load_embedder(args.model)
     out_dir = config.EMB_DIR / embedder.name
-    pending = pending_prefixes(out_dir)
+    pending = pending_prefixes(out_dir, embedder.signature)
     prefixes = pending if args.all else [p for p in args.prefixes if p in pending]
     if skipped := [p for p in (args.prefixes or []) if p not in pending]:
         print(f"Skipping {' '.join(skipped)}: already done or not a prefix folder on the drive")
@@ -118,7 +124,7 @@ def main() -> None:
         n = embed_prefix(prefix, embedder, out_dir, args.batch, args.workers)
         secs = time.monotonic() - start
         print(f"{prefix}: {n} covers in {secs:.0f} s ({n / max(secs, 1e-9):.0f} img/s)")
-    print(f"{len(pending_prefixes(out_dir))} prefixes left in {out_dir}")
+    print(f"{len(pending_prefixes(out_dir, embedder.signature))} prefixes left in {out_dir}")
 
 
 if __name__ == "__main__":

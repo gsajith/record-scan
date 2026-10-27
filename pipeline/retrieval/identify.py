@@ -3,9 +3,7 @@
     python -m pipeline.retrieval.identify photo.jpg --model NAME [--index DIR] [--k 5] [--views 1|3]
 
 --index defaults to config.EMB_DIR/<model>. Pass it to query an index built in another
-shard folder. The 2025-11 clip-vit-b-32-aug13 shards used plain GELU ViT-B-32 rather than
-this QuickGELU baseline, so true matches against them score about 0.95, not 1.0: fine for a
-smoke test, never for numbers.
+shard folder. The index must come from an embedder with the same signature as this one.
 """
 
 import argparse

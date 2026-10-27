@@ -322,7 +322,8 @@ def run_eval(model: str, set_name: str, distractors: int, views: int, px: int | 
 
     # Keyed by the embedder's signature, so changed preprocessing embeds a fresh gallery
     index_dir = work_dir / f"{embedder.signature}-{gallery_hash(gallery)}"
-    if not (index_dir / "index.hnsw").exists():
+    # build_index writes signature.txt last, so a crash mid-build leaves a dir that rebuilds
+    if not (index_dir / "signature.txt").exists():
         root = config.require_image_root()
         index_dir.mkdir(parents=True, exist_ok=True)
         (index_dir / "errors.log").unlink(missing_ok=True)  # a retried embed logs its errors afresh
