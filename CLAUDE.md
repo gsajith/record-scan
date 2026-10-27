@@ -15,3 +15,12 @@ The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready
 ### Domain docs
 
 Single-context: one root `GLOSSARY.md` plus `docs/adr/`. See `docs/agents/domain.md`.
+
+### Code review
+
+`REVIEW.md` says what reviews check here and which paths need Gautham's approval. Any review reads it: `/work-issue`'s reviewer, `/mattpocock-skills:code-review` (which `/mattpocock-skills:implement` ends with) and ad hoc subagents. Pass its path to every reviewer subagent, and to both of code-review's sub-agents as a standards source.
+
+- A re-review after fixes covers the commits since the last review, plus whether each earlier finding is fixed. With code-review, pass the last reviewed SHA as the fixed point.
+- When a second review round still has findings, stop patching and reconsider the approach before the third.
+- When a diff touches a path under "Human approval" in `REVIEW.md`, don't merge it. Say so in the final report.
+- PR bodies fill in `.github/pull_request_template.md`.
