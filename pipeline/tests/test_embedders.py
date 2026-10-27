@@ -49,6 +49,33 @@ def test_each_embedder_unit_vectors(name):
     assert not np.allclose(embs[0], embs[1])
 
 
+def parity_images():
+    """Flat covers trip MPS bugs that textured ones hide, so the set has both."""
+    rng = np.random.default_rng(0)
+    flat = [Image.new("RGB", (300, 300), color) for color in ((250, 250, 250), (20, 20, 20), (200, 40, 40))]
+    two_tone = Image.new("RGB", (300, 300), (240, 230, 210))
+    two_tone.paste((30, 60, 120), (0, 150, 300, 300))
+    noise = Image.fromarray(rng.integers(0, 256, (300, 300, 3), dtype=np.uint8))
+    return flat + [two_tone, noise]
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs Apple's MPS")
+@pytest.mark.parametrize("name", EMBEDDER_NAMES)
+def test_each_embedder_matches_cpu_on_mps(name):
+    # Run after every torch upgrade: two MPS bugs once gave wrong vectors with no error
+    from huggingface_hub import get_token
+
+    if BACKBONES[name].gated and get_token() is None:
+        pytest.skip(f"{name} is gated on Hugging Face: set HF_TOKEN or run `hf auth login`")
+    images = parity_images()
+
+    on_mps = load_embedder(name, device="mps").embed(images)
+    on_cpu = load_embedder(name, device="cpu").embed(images)
+
+    assert np.sum(on_mps * on_cpu, axis=1).min() >= 0.9999
+
+
 def test_query_views_apply_exif_rotation(tmp_path):
     # Stored sideways, red on the left, with the orientation tag phones write for a portrait shot
     img = Image.new("RGB", (400, 300), (0, 0, 255))
