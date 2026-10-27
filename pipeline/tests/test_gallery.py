@@ -143,3 +143,18 @@ def test_a_read_error_leaves_the_prefix_pending_but_a_missing_file_does_not(driv
     assert is_done("00", files, out)
     log = (out / "00.errors.log").read_text()
     assert CORRUPT in log and "0000000000ff" in log and WIDE not in log
+
+
+def test_a_redo_with_a_read_error_does_not_inherit_the_old_done_marker(drive, tmp_path):
+    out = tmp_path / "gallery256"
+    process_prefix("00", drive["00"], out, workers=2)
+    (out / "00.phash.npy").unlink()
+    assert not is_done("00", drive["00"], out)  # lost hashes, like a lost shard, mean not done
+
+    wide = config.IMAGE_ROOT / "00" / f"{WIDE}.jpg"
+    wide.chmod(0)
+    try:
+        process_prefix("00", drive["00"], out, workers=2)
+    finally:
+        wide.chmod(0o644)
+    assert not is_done("00", drive["00"], out)  # the partial redo isn't done under the old marker

@@ -86,7 +86,8 @@ def signature(files: list[str]) -> str:
 
 def is_done(prefix: str, files: list[str], out_dir: Path) -> bool:
     done = out_dir / f"{prefix}.done"
-    return done.exists() and (out_dir / f"{prefix}.tar").exists() and done.read_text() == signature(files)
+    outputs = (out_dir / f"{prefix}.tar", out_dir / f"{prefix}.phash.npy")
+    return done.exists() and all(p.exists() for p in outputs) and done.read_text() == signature(files)
 
 
 def process_prefix(prefix: str, files: list[str], out_dir: Path, workers: int) -> tuple[int, int]:
@@ -97,6 +98,7 @@ def process_prefix(prefix: str, files: list[str], out_dir: Path, workers: int) -
         return 0, 0
     root = config.require_image_root()
     out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{prefix}.done").unlink(missing_ok=True)  # a redo that fails partway must not look done
     errors_log = out_dir / f"{prefix}.errors.log"
     errors_log.unlink(missing_ok=True)
     files = sorted(files)
