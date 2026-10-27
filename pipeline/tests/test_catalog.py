@@ -4,7 +4,7 @@ import re
 import pytest
 
 from pipeline.metadata.build_catalog_db import build
-from pipeline.metadata.catalog import Catalog, Release, normalize
+from pipeline.metadata.catalog import Catalog, Cover, Release, normalize
 
 BEATLES = "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d"
 BJORK = "87c5dedd-371d-4a53-9f7f-80522fb7f3cb"
@@ -28,29 +28,37 @@ def test_normalize(raw, expected):
     assert normalize(raw) == expected
 
 
+def write_jsonl(path, rows):
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return path
+
+
 def write_fake_dump(tmp_path):
-    """Three releases in the slim dump shape, with an unknown artist id and mixed cover_id types."""
+    """Three releases in the slim shape with an unknown artist id, plus a covers list."""
     releases = [
-        {"title": "Abbey Road", "id": ABBEY, "artist_ids": [BEATLES], "format": "12\" Vinyl", "cover_id": 123},
-        {"title": "Debut", "id": DEBUT, "artist_ids": [BJORK, "no-such-artist"], "cover_id": "456"},
+        {"title": "Abbey Road", "id": ABBEY, "artist_ids": [BEATLES], "format": "12\" Vinyl"},
+        {"title": "Debut", "id": DEBUT, "artist_ids": [BJORK, "no-such-artist"], "release_group": "rg-2"},
         {"title": "Abbey Road Revisited", "id": TRIBUTE, "artist_ids": ["no-such-artist"]},
     ]
     artists = {
         BEATLES: {"name": "Beatles, The", "aliases": ["The Beatles"]},
         BJORK: {"name": "Björk"},
     }
-    releases_json = tmp_path / "releases.json"
+    covers = [  # TRIBUTE has none: its lookup found no usable image
+        {"mbid": ABBEY, "cover_id": "123", "file": f"11/{ABBEY}.jpg", "primary": True},
+        {"mbid": DEBUT, "cover_id": "457", "file": f"22/{DEBUT}-457.jpg", "primary": False},
+        {"mbid": DEBUT, "cover_id": "456", "file": f"22/{DEBUT}.jpg", "primary": True},
+    ]
     artists_json = tmp_path / "artists.json"
-    releases_json.write_text(json.dumps(releases))
     artists_json.write_text(json.dumps(artists))
-    return releases_json, artists_json
+    return (write_jsonl(tmp_path / "releases.jsonl", releases), artists_json,
+            write_jsonl(tmp_path / "covers.jsonl", covers))
 
 
 @pytest.fixture
 def catalog(tmp_path):
-    releases_json, artists_json = write_fake_dump(tmp_path)
     out = tmp_path / "catalog.sqlite"
-    assert build(releases_json, artists_json, out, delta_dir=None) == 3
+    assert build(*write_fake_dump(tmp_path), out) == 3
     assert not out.with_name(out.name + ".tmp").exists()
     return Catalog(out)
 
@@ -86,34 +94,14 @@ def test_find_exact(catalog):
     assert catalog.find("Beatles", "Abbey Road Revisited") == []
 
 
-def test_build_ingests_delta(tmp_path):
-    releases_json, artists_json = write_fake_dump(tmp_path)
-    delta = tmp_path / "delta"
-    (delta / "releases").mkdir(parents=True)
-    (delta / "artists").mkdir()
-    new_artist = "44444444-4444-4444-8444-444444444444"
-    new_release = "55555555-5555-4555-8555-555555555555"
-    (delta / "artists" / "2026-11-01.jsonl").write_text(
-        json.dumps({"id": new_artist, "name": "Sigur Rós", "aliases": []}) + "\n"
-    )
-    (delta / "releases" / "2026-11-01.jsonl").write_text(
-        json.dumps({"title": "Ágætis byrjun", "id": new_release, "artist_ids": [new_artist],
-                    "cover_id": 789, "release_group": "rg-1"}) + "\n"
-        + json.dumps({"title": "Debut (Deluxe)", "id": DEBUT, "artist_ids": [BJORK],
-                      "release_group": "rg-2"}) + "\n"
-    )
-    out = tmp_path / "catalog.sqlite"
-    assert build(releases_json, artists_json, out, delta_dir=delta) == 4
-
-    catalog = Catalog(out)
-    assert catalog.release(new_release) == Release(
-        mbid=new_release, title="Ágætis byrjun", artists=("Sigur Rós",),
-        format=None, cover_id="789", release_group="rg-1",
-    )
-    assert mbids(catalog.search("sigur ros byrj")) == [new_release]
-    # A delta row replaces the dump row with the same mbid
-    assert catalog.release(DEBUT).title == "Debut (Deluxe)"
-    assert catalog.release(DEBUT).release_group == "rg-2"
+def test_build_takes_covers_and_release_groups(catalog):
+    debut = catalog.release(DEBUT)
+    assert (debut.cover_id, debut.release_group) == ("456", "rg-2")
+    # Primary first, then extra fronts
+    assert catalog.covers(DEBUT) == [Cover(DEBUT, "456", f"22/{DEBUT}.jpg", True),
+                                     Cover(DEBUT, "457", f"22/{DEBUT}-457.jpg", False)]
+    assert catalog.release(TRIBUTE).cover_id is None
+    assert catalog.covers(TRIBUTE) == []
 
 
 def test_missing_db_exits(reload_config, tmp_path):
