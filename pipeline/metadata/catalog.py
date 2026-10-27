@@ -131,10 +131,12 @@ class Catalog:
         Release groups, not titles: Weezer's self-titled albums are separate groups, and
         "Abbey Road (2019 Mix)" shares a group with Abbey Road.
         """
-        album = self.album_of(mbid)
-        if album == mbid:
+        row = self._db.execute("SELECT release_group FROM releases WHERE mbid = ?", (mbid,)).fetchone()
+        if row is None:
+            raise KeyError(mbid)
+        if row[0] is None:  # no release group: the release is an album of its own
             return [mbid]
-        return [m for (m,) in self._db.execute("SELECT mbid FROM releases WHERE release_group = ?", (album,))]
+        return [m for (m,) in self._db.execute("SELECT mbid FROM releases WHERE release_group = ?", (row[0],))]
 
     def cover_count(self) -> int:
         return self._db.execute("SELECT COUNT(*) FROM covers").fetchone()[0]
