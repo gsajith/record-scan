@@ -12,7 +12,7 @@
 
 **Contents:** Global constraints, Review focus, Decisions, What only Gautham can do (tasks and checkpoints), Layout, Phase A (Tasks 1 to 9), Phases B to D (outline), Data you can delete and when, Self-review notes.
 
-**Status:** Tasks 1 and 2 done. Task 6 code is in; its full cover fetch runs until about 2026-10-27, then a catalog rebuild finishes it. Next: Task 3, the labeler.
+**Status:** Tasks 1 and 2 done. Task 6 code is in; its full cover fetch runs until about 2026-10-27, then a catalog rebuild finishes it. Task 3 is built; its checkpoint, an hour of real labeling (#13), is next. Task 4: CLIP path in, #16 (eval) and #18 (six backbones) in progress.
 
 ## Global constraints
 
@@ -196,11 +196,13 @@ GET  /api/image/<set>/<sha1>              -> the JPEG (so the page can show loca
 ```
 Page flow: pick set (gold or wild); paste (Ctrl+V image or URL), drop files or URLs; the next unlabeled photo or inbox frame loads on open and after each save, and S skips one; image fills the left pane; right pane has the search box (debounced, results with thumbnails, arrow keys to move, Enter to pick), a kind toggle (positive, negative, unknown) with hotkeys P N U, tag checkboxes with hotkeys 1 to 9, 0, - and = (twelve tags), / to focus search, notes, and Save (Enter). After Save the next item loads; the picked album and kind carry over between frames of the same video and reset for a new one. A status strip shows counts per set and per split.
 
-- [ ] Step 1: Failing vitest cases: `splitFor` against the same five literal sha1 values as `SPLIT_VECTORS` in `pipeline/tests/test_labels.py`, `LabelSchema` rejects a wild label without license, accepts a gold label with `license: "own"`.
-- [ ] Step 2: Run, FAIL. Then implement routes and page; `npm run lint && npx tsc --noEmit && npx vitest run` clean.
-- [ ] Step 3: Manual check with `RS_DATA_DIR` pointing at a tmp folder: paste a cover image from the clipboard, search "abbey road", pick a release, save; the JSONL line validates with Python `load_labels`; a second label for the same image produces a second line and `load_labels` returns the newer one.
-- [ ] Step 4: `annotator/README.md` rewritten for the labeler: how to run, hotkeys, where files go, the license rule. Remove the Supabase sections and the stale `../pipeline/detector/export_yolo_dataset.py` path (that script now lives in `pipeline/legacy/`). Also put double quotes around the `RS_IMAGE_ROOT` value in the root `.env.example` so the file loads with dotenv parsers and with `source` alike.
-- [ ] Step 5: Commit `feat(annotator): local labeler for gold and wild photo sets`.
+- [x] Step 1: Failing vitest cases: `splitFor` against the same five literal sha1 values as `SPLIT_VECTORS` in `pipeline/tests/test_labels.py`, `LabelSchema` rejects a wild label without license, accepts a gold label with `license: "own"`.
+- [x] Step 2: Run, FAIL. Then implement routes and page; `npm run lint && npx tsc --noEmit && npx vitest run` clean.
+- [x] Step 3: Manual check with `RS_DATA_DIR` pointing at a tmp folder: paste a cover image from the clipboard, search "abbey road", pick a release, save; the JSONL line validates with Python `load_labels`; a second label for the same image produces a second line and `load_labels` returns the newer one.
+- [x] Step 4: `annotator/README.md` rewritten for the labeler: how to run, hotkeys, where files go, the license rule. Remove the Supabase sections and the stale `../pipeline/detector/export_yolo_dataset.py` path (that script now lives in `pipeline/legacy/`). Also put double quotes around the `RS_IMAGE_ROOT` value in the root `.env.example` so the file loads with dotenv parsers and with `source` alike.
+- [x] Step 5: Commit `feat(annotator): local labeler for gold and wild photo sets`.
+
+Progress: built in issues #10 (PR #36), #11 (PR #38) and #12 (PR #40). Steps 1 to 5 landed as those three PRs, not one commit. Since D9's 2026-10-26 revision, no test checks a wild license: wild labels store `other-permitted`. Gautham validated each PR by hand, including HEIC and the wild paste, drag and duplicate checks. The checkpoint (an hour of real labeling, #13) is still open.
 
 ### Task 4: retrieval core (embedders, index, identify, eval)
 
