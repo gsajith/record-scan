@@ -65,6 +65,15 @@ workers instead of 48. The first ~2,500 items were the run's earlier failures, w
 On fresh items, sampled every 2 minutes, the run landed 4.7 to 4.9 covers/s, the same as before.
 So archive.org caps us near 5 items/s whatever the concurrency; 48 workers is the default.
 
+### 2026-10-27: run finished, one retry
+
+The 96-worker run ended at 04:31 after 13.7 h: 275,089 covers landed, 303 releases had no usable
+cover and 4,006 failed (3,794 archive.org 500s, 173 404s, 27 401/403s, 12 busy or timed out).
+A retry at 48 workers took 58 min at 1.2 items/s, slow because most items were 500s waiting out
+their three tries. It landed 920 more, logged 156 as having no usable image (the 404s, now
+recorded once) and left 2,930 failing: 2,903 500s and 27 401/403s. Those look like broken items
+on archive.org, so another retry right away would mostly fail again.
+
 ## Catalog
 
 After the first 2,000 or so covers, `python -m pipeline.metadata.build_catalog_db` took 144 s:
@@ -73,4 +82,8 @@ After the first 2,000 or so covers, `python -m pipeline.metadata.build_catalog_d
 - 3,111,857 with a cover, 2.3 GB
 - covers table: 3,112,939 rows, 2,175 of them new `<mbid>-<cover_id>.jpg` files
 
-Rebuild again when the full run ends.
+After the retry it took 157 s:
+
+- 3,966,332 releases, 3,962,307 with a cover, 2.5 GB
+- covers table: 3,977,195 rows, one primary per release, 866,557 of them new `<mbid>-<cover_id>.jpg` files
+- 600 sampled cover files, 300 of them new, all on the drive
