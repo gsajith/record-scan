@@ -63,12 +63,16 @@ def test_load_rejects_tampered_split(tmp_path):
         load_labels(set_dir)
 
 
-def test_positive_needs_mbid_and_wild_needs_source(tmp_path):
-    set_dir = tmp_path / "wild"
+def test_positive_needs_mbid(tmp_path):
     with pytest.raises(ValueError, match="mbid"):
-        append_label(set_dir, make_label(SPLIT_VECTORS[0][0], mbid=None))
-    with pytest.raises(ValueError, match="source_url"):
-        append_label(set_dir, make_label(SPLIT_VECTORS[0][0], source_url=None))
+        append_label(tmp_path / "wild", make_label(SPLIT_VECTORS[0][0], mbid=None))
+
+
+def test_wild_photo_without_source_is_fine(tmp_path):
+    # D9 as revised 2026-10-26: the labeler records a source only when the browser gives one
+    set_dir = tmp_path / "wild"
+    append_label(set_dir, make_label(SPLIT_VECTORS[0][0], source_url=None, license="other-permitted"))
+    assert load_labels(set_dir)[0].source_url is None
 
 
 def test_gold_negative_without_source_is_fine(tmp_path):

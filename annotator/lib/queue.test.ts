@@ -30,7 +30,7 @@ describe("nextInQueue", () => {
     const green = await ingestImage(setDir, await jpeg("#0f0"));
     labelAsNegative(setDir, red.sha1);
 
-    expect(await nextInQueue(setDir)).toEqual({ next: { ...green, video: null }, remaining: 1 });
+    expect(await nextInQueue(setDir)).toEqual({ next: { ...green, video: null, sourceUrl: null }, remaining: 1 });
   });
 
   it("moves inbox frames into photos in name order, after photos already waiting", async () => {
@@ -43,11 +43,11 @@ describe("nextInQueue", () => {
     writeFileSync(join(inbox, "record-01.jpg"), frame1);
     writeFileSync(join(inbox, "record.mov"), "a video the frame sampler has not run on yet");
 
-    expect(await nextInQueue(setDir)).toEqual({ next: { ...waiting, video: null }, remaining: 3 });
+    expect(await nextInQueue(setDir)).toEqual({ next: { ...waiting, video: null, sourceUrl: null }, remaining: 3 });
 
     labelAsNegative(setDir, waiting.sha1);
     const sha1 = createHash("sha1").update(frame1).digest("hex");
-    expect(await nextInQueue(setDir)).toEqual({ next: { sha1, file: `photos/${sha1}.jpg`, video: "record" }, remaining: 2 });
+    expect(await nextInQueue(setDir)).toEqual({ next: { sha1, file: `photos/${sha1}.jpg`, video: "record", sourceUrl: null }, remaining: 2 });
     expect(existsSync(join(setDir, "photos", `${sha1}.jpg`))).toBe(true);
     expect(readdirSync(join(inbox, "done"))).toContain("record-01.jpg");
     expect(readdirSync(inbox)).toEqual(["done", "record-02.jpg", "record.mov"]);
@@ -58,7 +58,7 @@ describe("nextInQueue", () => {
     const red = await ingestImage(setDir, await jpeg("#f00"));
     const green = await ingestImage(setDir, await jpeg("#0f0"));
 
-    expect(await nextInQueue(setDir, [red.sha1])).toEqual({ next: { ...green, video: null }, remaining: 2 });
+    expect(await nextInQueue(setDir, [red.sha1])).toEqual({ next: { ...green, video: null, sourceUrl: null }, remaining: 2 });
     expect(await nextInQueue(setDir, [red.sha1, green.sha1])).toEqual({ next: null, remaining: 2 });
   });
 
@@ -68,7 +68,7 @@ describe("nextInQueue", () => {
     writeFileSync(join(setDir, "inbox", "abbey road-01.jpg"), await jpeg("#f0f"));
     const pasted = await ingestImage(setDir, await jpeg("#0f0"));
 
-    expect((await nextInQueue(setDir)).next).toEqual({ ...pasted, video: null });
+    expect((await nextInQueue(setDir)).next).toEqual({ ...pasted, video: null, sourceUrl: null });
     labelAsNegative(setDir, pasted.sha1);
     expect((await nextInQueue(setDir)).next?.video).toBe("abbey road");
   });
@@ -113,8 +113,8 @@ describe("nextInQueue", () => {
 
   it("ignores a damaged line in the sources file", async () => {
     const setDir = tempSetDir();
-    mkdirSync(join(setDir, "inbox", "done"), { recursive: true });
-    writeFileSync(join(setDir, "inbox", "done", "sources.jsonl"), '{"sha1": "trunc\n');
+    mkdirSync(join(setDir, "inbox"), { recursive: true });
+    writeFileSync(join(setDir, "sources.jsonl"), '{"sha1": "trunc\n');
     writeFileSync(join(setDir, "inbox", "abbey-01.jpg"), await jpeg("#456"));
     expect((await nextInQueue(setDir)).next?.video).toBe("abbey");
   });

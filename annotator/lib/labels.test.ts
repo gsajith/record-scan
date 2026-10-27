@@ -34,7 +34,8 @@ const wildLabel = {
 };
 
 describe("checkLabel", () => {
-  it("refuses a wild label without a license", () => {
+  // Every line carries a license field, as Python's loader checks the exact keys
+  it("refuses a label missing its license field", () => {
     const noLicense: Partial<typeof wildLabel> = { ...wildLabel };
     delete noLicense.license;
     expect(checkLabel("wild", noLicense)).toMatchObject({ error: expect.stringContaining("license") });
@@ -66,9 +67,8 @@ describe("checkLabel", () => {
     });
   });
 
-  it("refuses a wild photo without a source url", () => {
-    expect(checkLabel("wild", { ...wildLabel, source_url: null })).toMatchObject({
-      error: expect.stringContaining("source_url"),
-    });
+  it("accepts a wild photo without a source, like the Python loader", () => {
+    const noSource = { ...wildLabel, source_url: null, license: "other-permitted" };
+    expect(checkLabel("wild", noSource)).toEqual({ label: noSource });
   });
 });

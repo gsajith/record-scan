@@ -65,8 +65,6 @@ def _validate(label: Label, set_name: str) -> None:
         raise ValueError("a positive label needs a valid mbid")
     if label.kind != "positive" and label.mbid is not None:
         raise ValueError(f"a {label.kind} label must not carry an mbid")
-    if set_name == "wild" and not label.source_url:
-        raise ValueError("a wild photo needs a source_url (and a license)")
 
 
 def append_label(set_dir: Path, label: Label) -> None:

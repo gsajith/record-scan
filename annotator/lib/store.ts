@@ -2,15 +2,32 @@
 // <set>/photos/<sha1>.jpg and one JSON line per label in <set>/labels.jsonl.
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
+import { fingerprint, isNearDuplicate } from "./duplicates";
 import { checkLabel, SETS, type Label, type Split } from "./labels";
 
 const MAX_SIDE = 1600;
+
+export function isMissing(e: unknown): boolean {
+  return (e as NodeJS.ErrnoException).code === "ENOENT";
+}
 
 /** Where a photo lives inside its set folder. */
 export function photoFile(sha1: string): string {
@@ -30,22 +47,92 @@ export class NotAnImageError extends Error {}
  */
 export async function ingestImage(setDir: string, input: Buffer): Promise<{ sha1: string; file: string }> {
   const sha1 = createHash("sha1").update(input).digest("hex");
-  const file = photoFile(sha1);
-  const path = join(setDir, file);
-  if (!existsSync(path)) {
-    const jpeg = await decodeToJpeg(input);
-    mkdirSync(join(setDir, "photos"), { recursive: true });
-    // Write then rename, so a crash never leaves a half-written photo under its final name
-    const partial = `${path}.${randomUUID()}.partial`;
+  if (!existsSync(join(setDir, photoFile(sha1)))) writePhoto(setDir, sha1, await decodeToJpeg(input));
+  return { sha1, file: photoFile(sha1) };
+}
+
+function writePhoto(setDir: string, sha1: string, jpeg: Buffer): void {
+  const path = join(setDir, photoFile(sha1));
+  mkdirSync(join(setDir, "photos"), { recursive: true });
+  // Write then rename, so a crash never leaves a half-written photo under its final name
+  const partial = `${path}.${randomUUID()}.partial`;
+  try {
+    writeFileSync(partial, jpeg);
+    renameSync(partial, path);
+  } catch (e) {
+    rmSync(partial, { force: true }); // e.g. a full disk; don't leave the fragment behind
+    throw e;
+  }
+}
+
+/** A wild photo that looks like one already in the set; `match` is that photo's sha1. */
+export class NearDuplicateError extends Error {
+  constructor(readonly match: string) {
+    super(`This looks like a photo already in the wild set (${match.slice(0, 8)}).`);
+  }
+}
+
+/**
+ * Save a wild photo, with the address it came from when the browser gave one. Refuses a
+ * near-duplicate of a wild photo already added this way: a pasted copy and the downloaded file
+ * of one photo hash differently, and could otherwise land in different splits.
+ */
+export async function ingestWild(
+  setDir: string,
+  input: Buffer,
+  sourceUrl: string | null,
+): Promise<{ sha1: string; file: string; sourceUrl: string | null }> {
+  const sha1 = createHash("sha1").update(input).digest("hex");
+  const sources = readSources(setDir);
+  if (existsSync(join(setDir, photoFile(sha1)))) {
+    // The same file again: keep the address it came with, or record the first one given
+    const stored = sources.get(sha1)?.source_url;
+    if (!stored && sourceUrl) appendSource(setDir, { sha1, source_url: sourceUrl });
+    return { sha1, file: photoFile(sha1), sourceUrl: stored ?? sourceUrl };
+  }
+  const jpeg = await decodeToJpeg(input);
+  const phash = await fingerprint(jpeg);
+  for (const other of sources.values()) {
+    // A fingerprint whose photo never got written (a crash or full disk mid-save) is stale
+    if (!other.phash || !existsSync(join(setDir, photoFile(other.sha1)))) continue;
+    if (isNearDuplicate(phash, other.phash)) throw new NearDuplicateError(other.sha1);
+  }
+  // Fingerprint first, so a saved photo is never missing from the check; a stale line is skipped above
+  appendSource(setDir, { sha1, phash, ...(sourceUrl ? { source_url: sourceUrl } : {}) });
+  writePhoto(setDir, sha1, jpeg);
+  return { sha1, file: photoFile(sha1), sourceUrl };
+}
+
+/**
+ * Where each photo came from, one JSON line per fact in <set>/sources.jsonl: the inbox frame it
+ * was taken from, or a wild photo's address and fingerprint.
+ */
+export type Source = { sha1: string; frame?: string; source_url?: string; phash?: string };
+
+export function appendSource(setDir: string, source: Source): void {
+  mkdirSync(setDir, { recursive: true });
+  appendFileSync(join(setDir, "sources.jsonl"), toJsonLine(source));
+}
+
+/** Sources by sha1. Only hints for the page and the duplicate check, so a torn line is skipped. */
+export function readSources(setDir: string): Map<string, Source> {
+  let text: string;
+  try {
+    text = readFileSync(join(setDir, "sources.jsonl"), "utf8");
+  } catch (e) {
+    if (isMissing(e)) return new Map();
+    throw e;
+  }
+  const sources = new Map<string, Source>();
+  for (const line of text.split("\n")) {
     try {
-      writeFileSync(partial, jpeg);
-      renameSync(partial, path);
-    } catch (e) {
-      rmSync(partial, { force: true }); // e.g. a full disk; don't leave the fragment behind
-      throw e;
+      const source = JSON.parse(line) as Source;
+      if (typeof source.sha1 === "string") sources.set(source.sha1, { ...sources.get(source.sha1), ...source });
+    } catch {
+      // skip a torn line
     }
   }
-  return { sha1, file };
+  return sources;
 }
 
 async function decodeToJpeg(input: Buffer): Promise<Buffer> {
@@ -132,7 +219,7 @@ export function readLabels(setDir: string): Map<string, Label> {
   try {
     text = readFileSync(path, "utf8");
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return latest; // no labels yet
+    if (isMissing(e)) return latest; // no labels yet
     throw e;
   }
   text.split("\n").forEach((line, i) => {
