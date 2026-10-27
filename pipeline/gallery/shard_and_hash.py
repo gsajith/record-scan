@@ -10,12 +10,14 @@ and written to config.GALLERY_DIR on the internal disk:
 
     <prefix>.tar         WebDataset shard, one <file stem>.jpg per cover: the drive file's bytes
     <prefix>.covers.npy  structured array: key (the file stem, <mbid> or <mbid>-<cover_id>),
-                         phash (uint64, imagehash.phash of the original), width, height
+                         phash (uint64, imagehash.phash of the original converted to RGB; the
+                         same as imagehash for RGB and gray covers), width, height of the
+                         stored pixels (EXIF orientation is ignored, as embed.py does)
     <prefix>.errors.log  covers skipped: corrupt, missing from the drive, or a read error
     <prefix>.done        the recipe and a hash of the prefix's cover list
 
-A rerun skips prefixes done with the same recipe and cover list, so a catalog update or a change
-to the hash redoes them. A read error leaves its prefix pending for the next run to retry; if the
+A rerun skips prefixes copied with the same cover list, so a catalog update redoes them; a library
+upgrade doesn't, and the marker records which hash recipe each prefix used. A read error leaves its prefix pending for the next run to retry; if the
 drive drops out mid-prefix, the run stops. Nothing is written to the drive.
 """
 
@@ -37,9 +39,11 @@ from pipeline import config
 from pipeline.metadata.catalog import Catalog
 
 PREFIXES = [f"{i:02x}" for i in range(256)]
-# Names everything that shapes the output, so done prefixes are redone when it changes: the bytes are
-# copied as is, and the hash depends on the code in read_and_hash() and the libraries it calls.
-RECIPE = f"original-phash8-pillow{PIL.__version__}-scipy{scipy.__version__}-numpy{np.__version__}"
+# A done marker reads "original-<HASH_RECIPE> <hash of the cover list>". The copy depends only on the
+# cover list, so a library upgrade doesn't redo the slow drive read. The hash depends on phash() and
+# the libraries it calls: change HASH_RECIPE when phash() changes, and readers of covers.npy refuse
+# prefixes whose hash recipes differ.
+HASH_RECIPE = f"phash8-pillow{PIL.__version__}-scipy{scipy.__version__}-numpy{np.__version__}"
 COVERS_DTYPE = np.dtype([("key", "U64"), ("phash", np.uint64), ("width", np.uint32), ("height", np.uint32)])
 
 
@@ -70,16 +74,24 @@ def read_and_hash(path: Path) -> tuple[bytes, int, int, int] | OSError | Corrupt
         return CorruptCover(f"{type(e).__name__}: {e}")
 
 
-def signature(files: list[str]) -> str:
-    """The recipe plus a hash of the cover list, so a catalog update that changes the list redoes the prefix."""
-    digest = hashlib.sha1("\n".join(sorted(files)).encode()).hexdigest()[:16]
-    return f"{RECIPE} {digest}"
+def _list_digest(files: list[str]) -> str:
+    return hashlib.sha1("\n".join(sorted(files)).encode()).hexdigest()[:16]
 
 
 def is_done(prefix: str, files: list[str], out_dir: Path) -> bool:
+    """Copied with this cover list, so a catalog update that changes the list redoes the prefix."""
     done = out_dir / f"{prefix}.done"
     outputs = (out_dir / f"{prefix}.tar", out_dir / f"{prefix}.covers.npy")
-    return done.exists() and all(p.exists() for p in outputs) and done.read_text() == signature(files)
+    if not (done.exists() and all(p.exists() for p in outputs)):
+        return False
+    recipe, _, digest = done.read_text().partition(" ")
+    return recipe.startswith("original-") and digest == _list_digest(files)
+
+
+def hash_recipe(prefix: str, out_dir: Path) -> str:
+    """The HASH_RECIPE the prefix's covers.npy was written with."""
+    recipe, _, _ = (out_dir / f"{prefix}.done").read_text().partition(" ")
+    return recipe.removeprefix("original-")
 
 
 def process_prefix(prefix: str, files: list[str], out_dir: Path, workers: int) -> tuple[int, int]:
@@ -117,7 +129,7 @@ def process_prefix(prefix: str, files: list[str], out_dir: Path, workers: int) -
     os.replace(shard_tmp, out_dir / f"{prefix}.tar")
     os.replace(rows_tmp, out_dir / f"{prefix}.covers.npy")
     if not retry:
-        (out_dir / f"{prefix}.done").write_text(signature(files))
+        (out_dir / f"{prefix}.done").write_text(f"original-{HASH_RECIPE} {_list_digest(files)}")
     return len(rows), len(files) - len(rows)
 
 

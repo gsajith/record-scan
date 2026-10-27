@@ -158,3 +158,15 @@ def test_a_redo_with_a_read_error_does_not_inherit_the_old_done_marker(drive, tm
     finally:
         wide.chmod(0o644)
     assert not is_done("00", drive["00"], out)  # the partial redo isn't done under the old marker
+
+
+def test_a_library_upgrade_keeps_the_copy_done_and_records_the_hash_recipe(drive, tmp_path):
+    out = tmp_path / "gallery"
+    process_prefix("00", drive["00"], out, workers=2)
+    assert shard_and_hash.hash_recipe("00", out) == shard_and_hash.HASH_RECIPE
+
+    # Done markers from another numpy: the copy is still good, and the old hash recipe is visible
+    done = out / "00.done"
+    done.write_text(done.read_text().replace(shard_and_hash.HASH_RECIPE, "phash8-pillow11.3.0-scipy1.18.1-numpy0.0.0"))
+    assert is_done("00", drive["00"], out)
+    assert shard_and_hash.hash_recipe("00", out) == "phash8-pillow11.3.0-scipy1.18.1-numpy0.0.0"
