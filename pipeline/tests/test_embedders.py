@@ -116,4 +116,5 @@ def test_preprocess_signature_ignores_memory_addresses():
 
     assert first == other_address
     assert first.startswith("m-224px-")
-    assert preprocess_signature("m", 448, "Compose(Lambda())") != preprocess_signature("m", 224, "Compose(Lambda())")
+    # A real preprocessing change at the same size gets a new signature
+    assert preprocess_signature("m", 224, "Normalize(mean=0.5)") != preprocess_signature("m", 224, "Normalize(mean=0.4)")
