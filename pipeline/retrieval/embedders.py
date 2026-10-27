@@ -7,6 +7,7 @@ The DINOv3 weights are gated: accept the license on Hugging Face, then `hf auth 
 set HF_TOKEN.
 """
 
+import functools
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -37,6 +38,28 @@ BACKBONES = {
     "pe-core-s16": Backbone("timm/vit_pe_core_small_patch16_384.fb", 512, 384),
 }
 EMBEDDER_NAMES = tuple(BACKBONES)
+
+
+def exact_layer_norms(model: torch.nn.Module) -> None:
+    """Swap every LayerNorm's forward for the plain formula. On MPS (torch 2.8) the fused
+    layer_norm goes wrong when a vector has a large mean and a tiny spread: on flat areas of a
+    cover, DINOv3 ConvNeXt's first LayerNorm came out 13% off CPU and float64, while the plain
+    formula on MPS matches float64 to 1e-7."""
+    for mod in model.modules():
+        if isinstance(mod, torch.nn.LayerNorm):
+            mod.forward = functools.partial(_layer_norm, mod)
+
+
+def _layer_norm(mod: torch.nn.LayerNorm, x: torch.Tensor) -> torch.Tensor:
+    # DINOv3 ConvNeXt's LayerNorm subclass also normalizes (batch, channels, h, w) inputs
+    channels_first = getattr(mod, "data_format", "channels_last") == "channels_first"
+    dim = 1 if channels_first else -1
+    x = x - x.mean(dim, keepdim=True)
+    x = x * torch.rsqrt(x.pow(2).mean(dim, keepdim=True) + mod.eps)
+    if mod.weight is None:
+        return x
+    shape = (-1, 1, 1) if channels_first else (-1,)
+    return x * mod.weight.view(shape) + mod.bias.view(shape)
 
 PAD_GRAY = (128, 128, 128)
 
@@ -69,6 +92,8 @@ class ClipEmbedder:
         self.device = device
         self.model, _, self._preprocess = open_clip.create_model_and_transforms("ViT-B-32-quickgelu", pretrained="openai")
         self.model.to(device).eval()
+        if device == "mps":
+            exact_layer_norms(self.model)
         self.dim = self.model.visual.output_dim
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:
@@ -99,6 +124,8 @@ class HfEmbedder:
         self.device = device
         self._processor = AutoImageProcessor.from_pretrained(backbone.repo, size={"height": input_px, "width": input_px})
         self.model = AutoModel.from_pretrained(backbone.repo).to(device).eval()
+        if device == "mps":
+            exact_layer_norms(self.model)
         self._siglip = name.startswith("siglip")
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:
@@ -126,6 +153,12 @@ class PeCoreEmbedder:
 
         self.device = device
         self.model = timm.create_model(backbone.repo.removeprefix("timm/"), pretrained=True).to(device).eval()
+        # The attention pool feeds its learned query, expanded to the batch without a copy, into a
+        # Linear. On MPS (torch 2.8) that aborts the process with "buffer is not large enough";
+        # a contiguous copy fixes it and matches CPU output.
+        self.model.attn_pool.q.register_forward_pre_hook(lambda _, args: (args[0].contiguous(),))
+        if device == "mps":
+            exact_layer_norms(self.model)
         self._preprocess = timm.data.create_transform(**timm.data.resolve_model_data_config(self.model), is_training=False)
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:

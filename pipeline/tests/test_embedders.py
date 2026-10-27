@@ -1,8 +1,11 @@
+import copy
+
 import numpy as np
 import pytest
+import torch
 from PIL import Image
 
-from pipeline.retrieval.embedders import BACKBONES, EMBEDDER_NAMES, load_embedder, query_views
+from pipeline.retrieval.embedders import BACKBONES, EMBEDDER_NAMES, exact_layer_norms, load_embedder, query_views
 
 
 def test_query_views_three_sizes():
@@ -52,3 +55,40 @@ def test_query_views_apply_exif_rotation(tmp_path):
     # Upright, the red half is on top
     assert crop.getpixel((150, 10))[0] > 200
     assert crop.getpixel((150, 290))[2] > 200
+
+
+class ChannelsFirstLayerNorm(torch.nn.LayerNorm):
+    """Normalizes (batch, channels, h, w) over channels, like DINOv3 ConvNeXt's LayerNorm."""
+
+    data_format = "channels_first"
+
+    def forward(self, x):
+        return super().forward(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+
+
+@pytest.mark.parametrize("layer, shape", [(torch.nn.LayerNorm(96), (2, 5, 96)), (ChannelsFirstLayerNorm(96), (2, 96, 4, 4))])
+def test_exact_layer_norms_matches_torch(layer, shape):
+    torch.manual_seed(0)
+    torch.nn.init.normal_(layer.weight)
+    torch.nn.init.normal_(layer.bias)
+    x = torch.randn(shape)
+    expected = layer(x)
+
+    patched = copy.deepcopy(layer)
+    exact_layer_norms(patched)
+
+    torch.testing.assert_close(patched(x), expected, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs Apple's MPS")
+def test_exact_layer_norms_fixes_mps_on_flat_vectors():
+    # A large mean and a tiny spread, as on a flat area of a cover: torch 2.8's fused MPS
+    # layer_norm gets this wrong
+    torch.manual_seed(0)
+    x = 1 + 1e-3 * torch.randn(4, 96)
+    layer = torch.nn.LayerNorm(96, eps=1e-6)
+    expected = layer.double()(x.double()).float()
+
+    exact_layer_norms(layer)
+
+    torch.testing.assert_close(layer.float().to("mps")(x.to("mps")).cpu(), expected, rtol=1e-4, atol=1e-4)
