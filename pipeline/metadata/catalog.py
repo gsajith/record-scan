@@ -114,17 +114,27 @@ class Catalog:
             raise KeyError(mbid)
         return row[0]
 
-    def same_album(self, mbid: str) -> list[str]:
-        """Every release sharing this one's album_key, itself included. Raises KeyError for an unknown mbid.
+    def album_of(self, mbid: str) -> str:
+        """The release's album: its MusicBrainz release group, or the mbid itself when it has none.
 
-        A key with an empty half ("+" and "÷" both normalize to an empty title, an unresolved
-        artist to an empty name) joins nothing, matching how identify groups its results.
+        Eval hits and identify's one-slot-per-album both use this, so they agree on what an album
+        is. Raises KeyError for an unknown mbid.
         """
-        key = self.album_key(mbid)
-        title, artist = key.split("|", 1)
-        if not (title and artist):
+        row = self._db.execute("SELECT release_group FROM releases WHERE mbid = ?", (mbid,)).fetchone()
+        if row is None:
+            raise KeyError(mbid)
+        return row[0] or mbid
+
+    def same_album(self, mbid: str) -> list[str]:
+        """Every release in this one's release group, itself included. Raises KeyError for an unknown mbid.
+
+        Release groups, not titles: Weezer's self-titled albums are separate groups, and
+        "Abbey Road (2019 Mix)" shares a group with Abbey Road.
+        """
+        album = self.album_of(mbid)
+        if album == mbid:
             return [mbid]
-        return [m for (m,) in self._db.execute("SELECT mbid FROM releases WHERE album_key = ?", (key,))]
+        return [m for (m,) in self._db.execute("SELECT mbid FROM releases WHERE release_group = ?", (album,))]
 
     def cover_count(self) -> int:
         return self._db.execute("SELECT COUNT(*) FROM covers").fetchone()[0]

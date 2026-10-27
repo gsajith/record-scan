@@ -39,8 +39,9 @@ def load_eval_set(set_dir: Path, catalog: Catalog, clusters: dict[str, int] | No
     A positive whose release is no longer in the catalog stays in, with no targets: the app could
     not find it either, so it counts as a miss rather than leaving the denominator.
 
-    Targets are the labeled release, every release of the same album (Catalog.same_album), and,
-    once duplicate clusters exist, every release in the same cluster as any of those.
+    Targets are the labeled release, every release in its MusicBrainz release group
+    (Catalog.same_album), and, once duplicate clusters exist, every release in the same cluster
+    as any of those.
     """
     members: dict[int, set[str]] = {}
     for mbid, cluster in (clusters or {}).items():

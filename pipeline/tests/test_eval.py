@@ -17,6 +17,10 @@ DEBUT = "22222222-2222-4222-8222-222222222222"
 PLUS = "55555555-5555-4555-8555-555555555555"
 DIVIDE = "66666666-6666-4666-8666-666666666666"
 NOT_IN_CATALOG = "99999999-9999-4999-8999-999999999999"
+ABBEY_2019 = "11111111-1111-4111-8111-444444444444"
+WEEZER, BLUE_ALBUM, GREEN_ALBUM = ("77777777-7777-4777-8777-77777777777" + c for c in "012")
+# Release groups: MusicBrainz's own "these releases are one album"
+RG_ABBEY, RG_BLUE, RG_GREEN = ("88888888-8888-4888-8888-88888888888" + c for c in "012")
 
 # sha1 values whose first 8 hex digits are odd go to the wild set's eval half, even to sim
 EVAL_SHA = "00000001" + "a" * 32
@@ -42,15 +46,19 @@ FILLER = [f"{n:08x}-0000-4000-8000-000000000000" for n in range(30)]
 @pytest.fixture
 def catalog(tmp_path):
     releases = [
-        {"title": "Abbey Road", "id": ABBEY, "artist_ids": [BEATLES]},
-        {"title": "Abbey Road", "id": ABBEY_REISSUE, "artist_ids": [BEATLES]},
+        {"title": "Abbey Road", "id": ABBEY, "artist_ids": [BEATLES], "release_group": RG_ABBEY},
+        {"title": "Abbey Road", "id": ABBEY_REISSUE, "artist_ids": [BEATLES], "release_group": RG_ABBEY},
+        {"title": "Abbey Road (2019 Mix)", "id": ABBEY_2019, "artist_ids": [BEATLES], "release_group": RG_ABBEY},
         {"title": "Abbey Road Revisited", "id": LOOKALIKE, "artist_ids": [BEATLES]},
+        {"title": "Weezer", "id": BLUE_ALBUM, "artist_ids": [WEEZER], "release_group": RG_BLUE},
+        {"title": "Weezer", "id": GREEN_ALBUM, "artist_ids": [WEEZER], "release_group": RG_GREEN},
         {"title": "Debut", "id": DEBUT, "artist_ids": [BJORK]},
         {"title": "+", "id": PLUS, "artist_ids": [ED]},
         {"title": "÷", "id": DIVIDE, "artist_ids": [ED]},
         *({"title": f"Filler {n}", "id": m, "artist_ids": [BJORK]} for n, m in enumerate(FILLER)),
     ]
-    artists = {BEATLES: {"name": "Beatles, The"}, BJORK: {"name": "Björk"}, ED: {"name": "Ed Sheeran"}}
+    artists = {BEATLES: {"name": "Beatles, The"}, BJORK: {"name": "Björk"}, ED: {"name": "Ed Sheeran"},
+               WEEZER: {"name": "Weezer"}}
     return make_catalog(tmp_path, releases, artists)
 
 
@@ -84,13 +92,20 @@ def test_is_hit_rules(tmp_path, catalog):
     add_label(gold, sha(3), "negative")
     add_label(gold, sha(4), "unknown")
     add_label(gold, sha(5), "positive", NOT_IN_CATALOG)
+    add_label(gold, sha(6), "positive", BLUE_ALBUM)
 
-    abbey, plus, negative, unknown, gone = load_eval_set(gold, catalog, clusters={ABBEY: 7, LOOKALIKE: 7, DEBUT: 8})
+    abbey, plus, negative, unknown, gone, blue = load_eval_set(
+        gold, catalog, clusters={ABBEY: 7, LOOKALIKE: 7, DEBUT: 8}
+    )
 
-    # The labeled release, any release of the same album, and lookalikes in its duplicate cluster
-    assert is_hit(ABBEY, abbey) and is_hit(ABBEY_REISSUE, abbey) and is_hit(LOOKALIKE, abbey)
+    # The labeled release, any release in its MusicBrainz release group (whatever its title),
+    # and lookalikes in its duplicate cluster
+    assert is_hit(ABBEY, abbey) and is_hit(ABBEY_REISSUE, abbey) and is_hit(ABBEY_2019, abbey)
+    assert is_hit(LOOKALIKE, abbey)
     assert not is_hit(DEBUT, abbey)
-    # "+" and "÷" normalize to the same empty title, so the album rule must not join them
+    # Two albums with the same title and artist are still two albums
+    assert is_hit(BLUE_ALBUM, blue) and not is_hit(GREEN_ALBUM, blue)
+    # A release with no release group stands alone
     assert is_hit(PLUS, plus) and not is_hit(DIVIDE, plus)
     # Nothing is a hit for a photo with no answer in the catalog
     assert not is_hit(ABBEY, negative) and not is_hit(ABBEY, unknown)
@@ -143,9 +158,9 @@ def test_mini_gallery_holds_every_target_cover_plus_seeded_distractors(tmp_path,
     gallery = build_mini_gallery(items, catalog, distractors=10, seed=0)
 
     mbids = [c.mbid for c in gallery]
-    assert mbids[:2] == sorted([ABBEY, ABBEY_REISSUE])
-    assert len(mbids) == 12 and len(set(mbids)) == 12
-    assert not {ABBEY, ABBEY_REISSUE} & set(mbids[2:])
+    assert mbids[:3] == sorted([ABBEY, ABBEY_REISSUE, ABBEY_2019])
+    assert len(mbids) == 13 and len(set(mbids)) == 13
+    assert not {ABBEY, ABBEY_REISSUE, ABBEY_2019} & set(mbids[3:])
     assert gallery == build_mini_gallery(items, catalog, distractors=10, seed=0)
     assert gallery != build_mini_gallery(items, catalog, distractors=10, seed=1)
 
