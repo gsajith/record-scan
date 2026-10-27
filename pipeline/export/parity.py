@@ -2,7 +2,7 @@
 
     python -m pipeline.export.parity --model dinov3-vits16 --exported EXPORTS_DIR/dinov3-vits16-224-fp16.mlpackage
 
-Scores 20 gallery covers from prefix 00 on the drive. The bar is 0.99.
+Scores 20 gallery covers from prefix 00 on the drive against PARITY_BAR.
 """
 
 import argparse
@@ -15,7 +15,10 @@ import torch
 from PIL import Image
 
 from pipeline import config
-from pipeline.retrieval.embedders import EMBEDDER_NAMES
+from pipeline.export.model import check_sidecar, load_exportable
+from pipeline.retrieval.embedders import EMBEDDER_NAMES, Embedder
+
+PARITY_BAR = 0.99  # the research report's bar for an export to stay in the running
 
 
 def load_exported(path: Path) -> Callable[[torch.Tensor], np.ndarray]:
@@ -48,12 +51,15 @@ def mean_cosine(reference: torch.nn.Module, exported: Path, inputs: torch.Tensor
 
 def parity(model: str, exported: Path, images: list[Path], px: int | None = None) -> float:
     """Mean cosine between the PyTorch embedder on CPU and its export, on these images."""
-    from pipeline.export.model import check_sidecar, load
-
-    embedder, module, _ = load(model, px)
+    embedder, module, _ = load_exportable(model, px)
     check_sidecar(exported, embedder)
-    inputs = torch.stack([embedder.preprocess(Image.open(p)) for p in images])
+    inputs = torch.stack([_pixels(embedder, p) for p in images])
     return mean_cosine(module, exported, inputs)
+
+
+def _pixels(embedder: Embedder, path: Path) -> torch.Tensor:
+    with Image.open(path) as img:
+        return embedder.preprocess(img)
 
 
 def latency_ms(exported: Path, example: torch.Tensor, runs: int = 50) -> tuple[float, float]:
@@ -72,7 +78,7 @@ def latency_ms(exported: Path, example: torch.Tensor, runs: int = 50) -> tuple[f
 def gallery_sample(n: int = 20) -> list[Path]:
     """n covers spread evenly over prefix 00 on the drive, the same n on every run."""
     covers = sorted(p for p in (config.require_image_root() / "00").glob("*.jpg") if config.is_uuid(p.stem))
-    return covers[:: len(covers) // n][:n]
+    return covers[:: max(1, len(covers) // n)][:n]
 
 
 def main() -> None:
@@ -84,7 +90,8 @@ def main() -> None:
     args = parser.parse_args()
 
     score = parity(args.model, args.exported, gallery_sample(args.n), args.px)
-    print(f"{args.exported.name}: mean cosine {score:.6f} on {args.n} covers ({'pass' if score >= 0.99 else 'FAIL'}, bar 0.99)")
+    verdict = "pass" if score >= PARITY_BAR else "FAIL"
+    print(f"{args.exported.name}: mean cosine {score:.6f} on {args.n} covers ({verdict}, bar {PARITY_BAR})")
 
 
 if __name__ == "__main__":
