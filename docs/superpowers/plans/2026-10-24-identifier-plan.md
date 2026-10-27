@@ -12,7 +12,7 @@
 
 **Contents:** Global constraints, Review focus, Decisions, What only Gautham can do (tasks and checkpoints), Layout, Phase A (Tasks 1 to 9), Phases B to D (outline), Data you can delete and when, Self-review notes.
 
-**Status:** Tasks 1 and 2 done. Task 6 code is in; its full cover fetch runs until about 2026-10-27, then a catalog rebuild finishes it. Task 3 is built; its checkpoint, an hour of real labeling (#13), is next. Task 4: CLIP path in, #16 (eval) and #18 (six backbones) in progress.
+**Status:** Tasks 1 and 2 done. Task 6 code is in; its full cover fetch runs until about 2026-10-27, then a catalog rebuild finishes it. Task 3 is built; its checkpoint, an hour of real labeling (#13), is next. Task 4: CLIP path and eval in; Gautham signed off the eval rules (#17) with albums as release groups; #18 (six backbones) in progress.
 
 ## Global constraints
 
@@ -239,7 +239,7 @@ class Match: mbid: str; title: str; artists: tuple[str, ...]; score: float
 class Identifier:
     def __init__(self, embedder: Embedder, index_dir: Path, catalog: Catalog, clusters: dict[str, int] | None = None, ef: int = 128): ...
     def identify(self, img: Image.Image, k: int = 5, views: int = 3) -> list[Match]
-        # embed each view, knn k*10 per view, max score per cluster (cluster = clusters[mbid] if given else album_key), top k
+        # embed each view, knn k*10 per view, max score per cluster (cluster = clusters[mbid] if given else Catalog.album_of, the release group), top k
 
 # eval.py   CLI: python -m pipeline.retrieval.eval --model NAME --set gold|wild [--distractors 50000] [--views 1|3] [--px 224] [--seed 0] [--dry-run]
 @dataclass
@@ -255,7 +255,7 @@ def run_eval(model: str, set_name: str, distractors: int, views: int, px: int | 
 ```
 Per-tag recall is reported with its count so a slice of three photos is visibly weak. `micro_ap` follows SSCD: positives and negatives ranked by top-1 score, average precision of "is a positive and hit".
 
-- [ ] Step 1: Failing tests: `test_each_embedder_unit_vectors` (parametrized, `@pytest.mark.slow`, two fixture images, shape and norm; skips gated models when `HF_TOKEN` is unset with a clear message), `test_query_views_three_sizes`, `test_embed_prefix_skips_corrupt_and_resumes`, `test_build_index_and_identify_roundtrip` (synthetic vectors, duplicates collapse by album_key), `test_is_hit_rules`, `test_eval_report_metrics_and_slices` (hand-built rows), `test_load_eval_set_uses_eval_split_only`.
+- [ ] Step 1: Failing tests: `test_each_embedder_unit_vectors` (parametrized, `@pytest.mark.slow`, two fixture images, shape and norm; skips gated models when `HF_TOKEN` is unset with a clear message), `test_query_views_three_sizes`, `test_embed_prefix_skips_corrupt_and_resumes`, `test_build_index_and_identify_roundtrip` (synthetic vectors, releases of one release group collapse), `test_is_hit_rules`, `test_eval_report_metrics_and_slices` (hand-built rows), `test_load_eval_set_uses_eval_split_only`.
 - [ ] Step 2: Run, FAIL. Step 3: Implement. Step 4: all pass; smoke: build an index from the 2025-11 shards (`clip-vit-b-32-aug13`, allow_pickle, cast uuids) and identify a CAA `front-500` for a uuid in prefix 00.
 - [ ] Step 5: `git rm` the two old scripts. Commit `feat(pipeline): retrieval core with seven backbones, query views and slice eval`.
 
@@ -277,7 +277,7 @@ Progress: issue #16 landed `eval.py`, the locked eval rules, in a commit of its 
 - Per-tag numbers are r1 over positives with that tag, with the count. `pos_min_top1` is the lowest top-1 score among positives hit at rank 1. Micro AP breaks score ties against the model: wrong answers rank first.
 - The gallery is every cover of every target release plus `--distractors` covers from a `numpy.random.default_rng(seed)` permutation of the catalog's covers table, skipping target releases. A catalog rebuild changes the draw, so `report.json` records a gallery hash over the covers actually embedded; runs are comparable only when both the config hash and the gallery hash match. A complete gallery's hash equals the one `--dry-run` prints. The config hash covers the set, distractors, views, px, seed and the labels file, but not the model. The draw is per cover, so a release with extra fronts is a little likelier to be drawn. `gallery_embedded` in `report.json` counts the covers that were readable; a drive that drops mid-embed stops the run instead of caching a partial gallery. Results go to `docs/results/<date>-eval-<model>-<set>-<config hash>/`, so a same-day run with other settings never overwrites another. `--px 224` and no `--px` hash differently for CLIP although they run the same; pass `--px` only to change the size.
 - Retrieval goes through `Identifier` (HNSW, `ef=128`), the same path the app will use. Gallery embeddings are cached per model, px and gallery hash under `EMB_DIR/eval/`.
-- Clusters are not wired into the CLI yet; Task 5 passes them once `clusters.parquet` exists.
+- Clusters are not wired into the CLI yet; Task 5 passes them once `clusters.parquet` exists. When it does, `identify` must group by release group and cluster together (connected components of both), as the hit rule does; today it groups by cluster alone when clusters are given, so two releases of one album in different clusters would take two slots. Test that interaction there.
 - `misses.html` shows the misses, the 20 lowest-scoring hits and the 20 highest-scoring negatives. Thumbnails are each release's current front from the Cover Art Archive, which can differ from the extra front that matched.
 
 ### Task 5: the gallery pass (Step 1): shards, hashes, duplicate clusters
