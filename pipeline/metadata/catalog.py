@@ -114,6 +114,33 @@ class Catalog:
             raise KeyError(mbid)
         return row[0]
 
+    def same_album(self, mbid: str) -> list[str]:
+        """Every release sharing this one's album_key, itself included. Raises KeyError for an unknown mbid.
+
+        A key with an empty half ("+" and "÷" both normalize to an empty title, an unresolved
+        artist to an empty name) joins nothing, matching how identify groups its results.
+        """
+        key = self.album_key(mbid)
+        title, artist = key.split("|", 1)
+        if not (title and artist):
+            return [mbid]
+        return [m for (m,) in self._db.execute("SELECT mbid FROM releases WHERE album_key = ?", (key,))]
+
+    def cover_count(self) -> int:
+        return self._db.execute("SELECT COUNT(*) FROM covers").fetchone()[0]
+
+    def covers_by_rowid(self, rowids: list[int]) -> list[Cover]:
+        """Covers at the given row numbers (1 to cover_count(); a fresh build numbers them densely), in the given order."""
+        found: dict[int, Cover] = {}
+        for start in range(0, len(rowids), 10_000):  # SQLite caps the number of ? parameters per query
+            chunk = rowids[start : start + 10_000]
+            for rowid, m, c, f, p in self._db.execute(
+                f"SELECT rowid, mbid, cover_id, file, is_primary FROM covers WHERE rowid IN ({','.join('?' * len(chunk))})",
+                chunk,
+            ):
+                found[rowid] = Cover(m, c, f, bool(p))
+        return [found[r] for r in rowids if r in found]
+
     def find(self, artist: str, title: str) -> list[str]:
         """Mbids whose normalized title and primary artist equal the given ones."""
         key = f"{normalize(title)}|{normalize(artist)}"

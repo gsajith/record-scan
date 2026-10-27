@@ -28,8 +28,9 @@ EXPORTS_DIR = DATA_DIR / "exports"
 LIGHTBANK_DIR = DATA_DIR / "lightbank"
 CATALOG_DB = META_DIR / "catalog.sqlite"
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 # Measured numbers live in the repo, one file per run
-RESULTS_DIR = Path(__file__).resolve().parent.parent / "docs" / "results"
+RESULTS_DIR = REPO_ROOT / "docs" / "results"
 
 # MusicBrainz release ids, lowercase. Checked before an id goes into a URL or a path.
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")

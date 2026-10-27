@@ -246,12 +246,12 @@ class Identifier:
 class EvalItem: label: Label; targets: set[str]   # target mbids: the labeled mbid plus every mbid sharing its album_key, plus its cluster members when clusters exist
 def load_eval_set(set_dir: Path, catalog: Catalog, clusters: dict[str, int] | None) -> list[EvalItem]   # eval split only; positives need mbid; warns on unresolvable
 def is_hit(result_mbid: str, item: EvalItem) -> bool
-def build_mini_gallery(items: list[EvalItem], distractors: int, seed: int) -> list[str]   # all target mbids + seeded sample from existing_files.json
+def build_mini_gallery(items: list[EvalItem], catalog: Catalog, distractors: int, seed: int) -> list[Cover]   # every cover of every target release + a seeded permutation draw over the catalog's covers table, skipping targets (existing_files.json is gone since Task 6)
 @dataclass
 class EvalReport:
-    r1: float; r5: float; per_tag: dict[str, tuple[float, int]]; neg_max: float; pos_min_top1: float; micro_ap: float; rows: list[dict]
-    def to_markdown(self) -> str
-def run_eval(model: str, set_name: str, distractors: int, views: int, px: int, seed: int, work_dir: Path) -> EvalReport   # writes docs/results/<date>-eval-<model>-<set>/report.md, report.json (with git SHA, config hash, command) and misses.html (each miss beside its top-5 covers with scores, plus the 20 lowest-scoring hits; thumbnails hot-linked from coverartarchive.org front-250)
+    r1: float; r5: float; per_tag: dict[str, tuple[float, int]]; neg_max: float | None; pos_min_top1: float | None; micro_ap: float; rows: list[Row]
+    @classmethod from_rows(rows) -> EvalReport; def to_markdown(self) -> str
+def run_eval(model: str, set_name: str, distractors: int, views: int, px: int | None, seed: int, work_dir: Path) -> EvalReport   # writes docs/results/<date>-eval-<model>-<set>/report.md, report.json (with git SHA, config hash, command) and misses.html (each miss beside its top-5 covers with scores, plus the 20 lowest-scoring hits; thumbnails hot-linked from coverartarchive.org front-250)
 ```
 Per-tag recall is reported with its count so a slice of three photos is visibly weak. `micro_ap` follows SSCD: positives and negatives ranked by top-1 score, average precision of "is a positive and hit".
 
@@ -268,6 +268,16 @@ Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_vie
 - Deferred from the PR #37 review, both for when Task 5's shards remove the drive bottleneck: run `preprocess` in the decode workers instead of the main thread, and cache `album_key` lookups in `Identifier` for eval runs.
 - `identify` keeps an album with an empty title or artist key, such as Ed Sheeran's "+" and "÷", as its own group. The eval's hit rule (#16) has the same collision to decide on.
 - HNSW at the default `ef=128` returned the right top-1 album for 99.8% of 500 noisy queries on the 2025-11 index, with no gain up to `ef=1024`. Eval at 50k distractors can use exact search if that 0.2% matters.
+
+Progress: issue #16 landed `eval.py`, the locked eval rules, in a commit of its own. Rules for Gautham's sign-off in #17:
+- A hit is the labeled release, any release with the same `album_key` (`Catalog.same_album`), or, once Task 5's clusters exist, any release in the same duplicate cluster as any of those album releases. The cluster rule is that broad on purpose: a lookalike of a reissue shows the same cover. A key with an empty title or artist half joins nothing, as in `identify`. The empty-half rule lives in both `Catalog.same_album` and `Identifier._group`; fold them together in a later non-eval commit.
+- Only `split == "eval"` labels are scored. A positive whose release has left the catalog stays in as a certain miss, since the app could not find it either; `report.json` counts these as `positives_missing`.
+- `negative` and `unknown` photos both count as photos with no right answer: they set `neg_max` and rank in micro AP.
+- Per-tag numbers are r1 over positives with that tag, with the count. `pos_min_top1` is the lowest top-1 score among positives hit at rank 1. Micro AP breaks score ties against the model: wrong answers rank first.
+- The gallery is every cover of every target release plus `--distractors` covers from a `numpy.random.default_rng(seed)` permutation of the catalog's covers table, skipping target releases. A catalog rebuild changes the draw, so `report.json` records a gallery hash over the covers actually embedded; runs are comparable only when both the config hash and the gallery hash match. A complete gallery's hash equals the one `--dry-run` prints. The config hash covers the set, distractors, views, px, seed and the labels file, but not the model. The draw is per cover, so a release with extra fronts is a little likelier to be drawn. `gallery_embedded` in `report.json` counts the covers that were readable; a drive that drops mid-embed stops the run instead of caching a partial gallery. Results go to `docs/results/<date>-eval-<model>-<set>-<config hash>/`, so a same-day run with other settings never overwrites another. `--px 224` and no `--px` hash differently for CLIP although they run the same; pass `--px` only to change the size.
+- Retrieval goes through `Identifier` (HNSW, `ef=128`), the same path the app will use. Gallery embeddings are cached per model, px and gallery hash under `EMB_DIR/eval/`.
+- Clusters are not wired into the CLI yet; Task 5 passes them once `clusters.parquet` exists.
+- `misses.html` shows the misses, the 20 lowest-scoring hits and the 20 highest-scoring negatives. Thumbnails are each release's current front from the Cover Art Archive, which can differ from the extra front that matched.
 
 ### Task 5: the gallery pass (Step 1): shards, hashes, duplicate clusters
 
