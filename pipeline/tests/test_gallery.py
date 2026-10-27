@@ -95,6 +95,14 @@ def test_a_done_prefix_is_skipped_until_its_cover_list_changes(drive, tmp_path):
     shard_before = (out / "00.tar").read_bytes()
     assert process_prefix("00", drive["00"], out, workers=2) == (0, 0)
     assert (out / "00.tar").read_bytes() == shard_before
+    # The same covers in another order are the same prefix, and the shard is in name order
+    assert is_done("00", drive["00"][::-1], out)
+    assert list(read_shard(out / "00.tar")) == sorted(read_shard(out / "00.tar"))
+
+    # A lost shard isn't done, whatever the marker says
+    (out / "00.tar").unlink()
+    assert not is_done("00", drive["00"], out)
+    assert process_prefix("00", drive["00"], out, workers=2) == (4, 1)
 
     # A catalog update drops a cover: the prefix is redone with the new list
     fewer = [f for f in drive["00"] if SMALL not in f]
@@ -118,3 +126,20 @@ def test_a_drive_that_drops_mid_prefix_leaves_the_prefix_pending(drive, tmp_path
     assert not is_done("00", drive["00"], out)
     assert not (out / "00.tar").exists()
     assert not (out / "00.errors.log").exists()  # stopped at the first unreadable cover, logged nothing
+
+
+def test_a_read_error_leaves_the_prefix_pending_but_a_missing_file_does_not(drive, tmp_path):
+    out = tmp_path / "gallery256"
+    wide = config.IMAGE_ROOT / "00" / f"{WIDE}.jpg"
+    files = drive["00"] + ["00/00000000-0000-4000-8000-0000000000ff.jpg"]  # listed, never downloaded
+    wide.chmod(0)  # stands in for an I/O error on the USB drive
+    try:
+        assert process_prefix("00", files, out, workers=2) == (3, 3)
+    finally:
+        wide.chmod(0o644)
+    assert not is_done("00", files, out)  # a rerun gets another try at WIDE
+
+    assert process_prefix("00", files, out, workers=2) == (4, 2)
+    assert is_done("00", files, out)
+    log = (out / "00.errors.log").read_text()
+    assert CORRUPT in log and "0000000000ff" in log and WIDE not in log

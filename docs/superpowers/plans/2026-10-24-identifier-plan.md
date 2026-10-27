@@ -304,8 +304,8 @@ List covers from the catalog's `covers` table (Task 6), not by globbing the driv
 
 Progress: #19 landed `shard_and_hash.py` and `Catalog.cover_files`, with tests for the shard, the hashes, resume and a drive that drops mid-prefix; the clustering half of Steps 1 to 4 is #20. Notes:
 - The pHash is computed locally with scipy as `imagehash.phash` does (bit-identical on 200 real covers), so `imagehash` isn't a dependency. It hashes the 256 px image before JPEG encoding.
-- A `.done` marker holds `RECIPE` and a hash of the prefix's cover list, so a catalog update redoes every prefix whose list changed. Change `RECIPE` when the decode, resize, encode or hash changes.
-- If the drive drops, the first unreadable cover stops the run and the prefix stays pending. A leftover `<prefix>.tar.tmp` is overwritten on the next run.
+- A `.done` marker holds `RECIPE` (which includes Pillow's version) and a hash of the prefix's cover list, so a catalog update redoes every prefix whose list changed. Change `RECIPE` when the decode, resize, encode or hash changes.
+- Each cover is read, then decoded, so the two failures differ: a file that won't decode is corrupt and skipped for good, a missing file is skipped too, and any other read error leaves the prefix pending for the next run. If the drive drops, the run stops. A leftover `<prefix>.tar.tmp` is overwritten on the next run.
 - Prefix 00: 15,375 covers in 157 s, about 11.3 h for the rest, about 92 GB of shards. Numbers in `docs/results/2026-10-27-gallery-pass.md`.
 - About 2% of covers have a short side under 256 px: small originals (kept) and strips or banners with a 500 px long side. #56 (after #20, before #22) builds an exclusion list for non-covers (placeholders, blanks, strips) from contact sheets Gautham reviews; the drive and shards stay untouched.
 
