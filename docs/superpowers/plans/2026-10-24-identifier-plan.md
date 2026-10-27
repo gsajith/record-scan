@@ -347,6 +347,9 @@ The next update passes the new dump's date as `--date` and this one's as `--sinc
 - [x] Step 2: Run, FAIL. Step 3: Implement. Step 4: tests pass.
 - [x] Step 5: Live: `--dry-run` backlog in `docs/results/2026-10-25-catalog-update.md`; `--limit 500` end to end; catalog rebuilt with `release_group` filled; full run started under `nohup`.
 - [x] Step 6: Commit `feat(pipeline): update covers and metadata from a fresh musicbrainz dump`.
+- [x] Step 7: Full run and one retry done 2026-10-27; catalog rebuilt from `covers-2026-10-24.jsonl`.
+
+Progress: done 2026-10-27 (#21 closed). The catalog holds 3,966,332 releases, 3,962,307 with a cover; the covers table has 3,977,195 rows, 866,557 of them new `<mbid>-<cover_id>.jpg` files. 2,930 releases still fail on archive.org 500s and stay without a cover; a later rerun retries them. Numbers in `docs/results/2026-10-25-catalog-update.md`.
 
 ### Task 7: run the frozen sweep (Step 2) and the crop study (Step 3)
 
@@ -428,10 +431,11 @@ Nothing here is deleted by an agent. Each row names the task whose completion ma
 | `musicbrainz-dump-2025-08-13/` | 17 GB | Task 6 (catalog rebuilt from the 2026-10-24 slim) | superseded by the 2026-10-24 dump |
 | `metadata/slim_releases.json`, `slim_releases_with_covers.json`, `release_slim_artists.json`, `existing_files.json`, `failed_cover_fetches.json`, `failed_cover_id_fetches.json` | 1.6 GB | Task 6 (full run finished and catalog rebuilt) | the 2025 slim and fetch state; `covers-2025-08-13.jsonl` carries every 2025 cover forward and already leaves out the failed downloads |
 | `musicbrainz-dump-2026-10-24/release.tar.xz` | 22 GB | Task 6 (full run finished) | `releases-2026-10-24.jsonl` holds everything kept from it; download the next dump for the next update |
+| `metadata/covers-2026-10-24.backup-2026-10-27.jsonl` | 555 MB | now | the covers list before the retry run; the retry only added covers |
 | `~/.cache/clip` (1.2 GB), `~/.cache/torch/hub/checkpoints` (1.2 GB), HF `models--openai--clip-vit-base-patch32` (1.1 GB) | 3.5 GB | now | the OpenAI `clip` package, DINOv2 hub weights and transformers CLIP are not used by the new retrieval core |
 | HF `models--timm--vit_base_patch32_clip_224.openai` | 577 MB | keep | open_clip loads the `clip-vit-b-32` baseline from this cache |
 
-Already removed on 2026-10-24 at Gautham's request: `_archive-mbdump-2025-11/venv` (1.4 GB) and `_archive-album-annotator-2025-11/node_modules` (419 MB). On 2026-10-25, after issue #15 merged: `embeddings/clip-vit-b-32-aug13/` (1.1 GB with the smoke index), the November 2025 augmented shards built with the GELU config.
+Already removed on 2026-10-24 at Gautham's request: `_archive-mbdump-2025-11/venv` (1.4 GB) and `_archive-album-annotator-2025-11/node_modules` (419 MB). On 2026-10-25, after issue #15 merged: `embeddings/clip-vit-b-32-aug13/` (1.1 GB with the smoke index), the November 2025 augmented shards built with the GELU config. Also on 2026-10-25: `musicbrainz-dump-2025-08-13/` (17 GB) and `musicbrainz-dump-2026-10-24/release.tar.xz` (22 GB).
 
 ---
 
