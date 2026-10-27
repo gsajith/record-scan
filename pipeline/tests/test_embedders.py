@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from pipeline.retrieval.embedders import load_embedder, query_views
+from pipeline.retrieval.embedders import BACKBONES, EMBEDDER_NAMES, load_embedder, query_views
 
 
 def test_query_views_three_sizes():
@@ -22,8 +22,12 @@ def test_query_views_three_sizes():
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("name", ["clip-vit-b-32"])
+@pytest.mark.parametrize("name", EMBEDDER_NAMES)
 def test_each_embedder_unit_vectors(name):
+    from huggingface_hub import get_token  # HF_TOKEN, else the token `hf auth login` saved
+
+    if BACKBONES[name].gated and get_token() is None:
+        pytest.skip(f"{name} is gated on Hugging Face: set HF_TOKEN or run `hf auth login`")
     embedder = load_embedder(name)
     images = [Image.new("RGB", (500, 500), (200, 30, 30)), Image.new("RGB", (320, 480), (20, 90, 200))]
 
