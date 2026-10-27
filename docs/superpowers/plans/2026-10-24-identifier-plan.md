@@ -12,7 +12,7 @@
 
 **Contents:** Global constraints, Review focus, Decisions, What only Gautham can do (tasks and checkpoints), Layout, Phase A (Tasks 1 to 9), Phases B to D (outline), Data you can delete and when, Self-review notes.
 
-**Status:** Tasks 1 and 2 done. Task 6 code is in; its full cover fetch runs until about 2026-10-27, then a catalog rebuild finishes it. Task 3 is built; its checkpoint, an hour of real labeling (#13), is next. Task 4: CLIP path and eval in; Gautham signed off the eval rules (#17) with albums as release groups; #18 (six backbones) in progress.
+**Status:** Tasks 1 and 2 done. Task 6 code is in; its full cover fetch runs until about 2026-10-27, then a catalog rebuild finishes it. Task 3 is built; its checkpoint, an hour of real labeling (#13), is next. Task 4 done: seven backbones, identify and eval; Gautham signed off the eval rules (#17) with albums as release groups.
 
 ## Global constraints
 
@@ -255,11 +255,11 @@ def run_eval(model: str, set_name: str, distractors: int, views: int, px: int | 
 ```
 Per-tag recall is reported with its count so a slice of three photos is visibly weak. `micro_ap` follows SSCD: positives and negatives ranked by top-1 score, average precision of "is a positive and hit".
 
-- [ ] Step 1: Failing tests: `test_each_embedder_unit_vectors` (parametrized, `@pytest.mark.slow`, two fixture images, shape and norm; skips gated models when `HF_TOKEN` is unset with a clear message), `test_query_views_three_sizes`, `test_embed_prefix_skips_corrupt_and_resumes`, `test_build_index_and_identify_roundtrip` (synthetic vectors, releases of one release group collapse), `test_is_hit_rules`, `test_eval_report_metrics_and_slices` (hand-built rows), `test_load_eval_set_uses_eval_split_only`.
-- [ ] Step 2: Run, FAIL. Step 3: Implement. Step 4: all pass; smoke: build an index from the 2025-11 shards (`clip-vit-b-32-aug13`, allow_pickle, cast uuids) and identify a CAA `front-500` for a uuid in prefix 00.
-- [ ] Step 5: `git rm` the two old scripts. Commit `feat(pipeline): retrieval core with seven backbones, query views and slice eval`.
+- [x] Step 1: Failing tests: `test_each_embedder_unit_vectors` (parametrized, `@pytest.mark.slow`, two fixture images, shape and norm; skips gated models when `HF_TOKEN` is unset with a clear message), `test_query_views_three_sizes`, `test_embed_prefix_skips_corrupt_and_resumes`, `test_build_index_and_identify_roundtrip` (synthetic vectors, releases of one release group collapse), `test_is_hit_rules`, `test_eval_report_metrics_and_slices` (hand-built rows), `test_load_eval_set_uses_eval_split_only`.
+- [x] Step 2: Run, FAIL. Step 3: Implement. Step 4: all pass; smoke: build an index from the 2025-11 shards (`clip-vit-b-32-aug13`, allow_pickle, cast uuids) and identify a CAA `front-500` for a uuid in prefix 00.
+- [x] Step 5: `git rm` the two old scripts. Commit `feat(pipeline): retrieval core with seven backbones, query views and slice eval`.
 
-Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_views`, `embed.py`, the `build_index.py` rewrite and `identify.py`, with their tests. The smoke run returned each of three prefix-00 covers first, and a phone photo of The Dark Side of the Moon came back first; numbers in `docs/results/2026-10-25-clip-baseline-smoke.md`. #18 added the other six backbones (smoke numbers in `docs/results/2026-10-27-backbone-smoke.md`). #16 (eval) remains, so the steps above stay open. Notes:
+Progress: issue #15 landed the CLIP path: `embedders.py` (CLIP only), `query_views`, `embed.py`, the `build_index.py` rewrite and `identify.py`, with their tests. The smoke run returned each of three prefix-00 covers first, and a phone photo of The Dark Side of the Moon came back first; numbers in `docs/results/2026-10-25-clip-baseline-smoke.md`. #18 added the other six backbones (smoke numbers in `docs/results/2026-10-27-backbone-smoke.md`), and #16 the eval, so Task 4 is complete. Steps 1 to 5 landed as those three PRs, not one commit. Notes:
 - The two old scripts were already removed in d3c1455, so Step 5 has nothing left to `git rm`.
 - CLIP loads as `ViT-B-32-quickgelu`, which matches how OpenAI trained the weights. The 2025-11 shards were built with plain `ViT-B-32` (GELU), so QuickGELU queries reach only 0.92 to 0.96 against their own covers. Never mix the two in one index.
 - The six new backbones take their preprocessing from their model cards or reference code. DINOv3 resizes the whole image to a square with no crop; SigLIP2 does the same at 256 px; PE-Core does the same at 384 px with bilinear resizing, as Meta's reference code and training did (timm's config would crop instead). DINOv3 runs at any multiple of 16 px through `load_embedder(input_px=...)`; the others run at their native size only.
