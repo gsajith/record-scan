@@ -22,10 +22,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
-      # CPU wheels first: torch from PyPI on Linux pulls in gigabytes of CUDA libraries, and
-      # 2.8.0+cpu satisfies the lock's torch==2.8.0
-      - run: uv venv && uv pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0 torchvision==0.23.0
-      - run: uv pip install --require-hashes -r requirements.lock
+      # requirements-ci.lock: the Mac lock's versions, resolved for Linux with CPU torch (torch from
+      # PyPI on Linux pulls in gigabytes of CUDA libraries)
+      - run: uv venv && uv pip install --torch-backend cpu --require-hashes -r requirements-ci.lock
       - run: .venv/bin/python -m pytest -q -m "not slow"
 
   annotator:
