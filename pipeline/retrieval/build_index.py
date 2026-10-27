@@ -4,7 +4,7 @@
 
 Reads config.EMB_DIR/<model>/<prefix>.npz and writes index.hnsw, labels.npy (row id ->
 mbid, U36) and signature.txt beside them. Every shard must carry the same embedder
-signature (see embedders.preprocess_signature); shards from before signatures need
+signature (see embedders.embedder_signature); shards from before signatures need
 re-embedding.
 """
 

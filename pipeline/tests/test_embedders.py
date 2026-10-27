@@ -1,4 +1,6 @@
 import copy
+import dataclasses
+import re
 
 import numpy as np
 import pytest
@@ -8,11 +10,17 @@ from PIL import Image
 from pipeline.retrieval.embedders import (
     BACKBONES,
     EMBEDDER_NAMES,
+    embedder_signature,
     exact_layer_norms,
     load_embedder,
-    preprocess_signature,
     query_views,
 )
+
+
+@pytest.mark.parametrize("name", EMBEDDER_NAMES)
+def test_each_backbone_pins_a_commit(name):
+    # A branch name like "main" would follow upstream re-uploads
+    assert re.fullmatch(r"[0-9a-f]{40}", BACKBONES[name].revision)
 
 
 def test_query_views_three_sizes():
@@ -47,6 +55,20 @@ def test_each_embedder_unit_vectors(name):
     assert embs.dtype == np.float32
     np.testing.assert_allclose(np.linalg.norm(embs, axis=1), 1.0, atol=1e-5)
     assert not np.allclose(embs[0], embs[1])
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("name", EMBEDDER_NAMES)
+def test_each_embedder_loads_only_its_pinned_commit(name, monkeypatch):
+    # A loader that dropped the revision would quietly load the repo's latest commit instead
+    from huggingface_hub import get_token
+
+    if BACKBONES[name].gated and get_token() is None:
+        pytest.skip(f"{name} is gated on Hugging Face: set HF_TOKEN or run `hf auth login`")
+    monkeypatch.setitem(BACKBONES, name, dataclasses.replace(BACKBONES[name], revision="0" * 40))
+
+    with pytest.raises(OSError):
+        load_embedder(name, device="cpu")
 
 
 def parity_images():
@@ -133,15 +155,27 @@ def test_exact_layer_norms_refuses_a_layer_norm_it_cannot_replace():
         exact_layer_norms(torch.nn.LayerNorm((4, 4)))
 
 
-def test_preprocess_signature_ignores_memory_addresses():
+WEIGHTS = "timm/vit_pe_core_small_patch16_384.fb@255fa76e26fdf8daa47e0d607da46b7051879045 timm-1.0.30"
+
+
+def test_embedder_signature_ignores_memory_addresses():
     # CLIP's transform holds a function, whose repr names its address; that differs per process
     def to_rgb(img):
         return img
 
-    first = preprocess_signature("m", 224, f"Compose(Lambda({to_rgb!r}))")
-    other_address = preprocess_signature("m", 224, f"Compose(Lambda({to_rgb!r}))".replace(hex(id(to_rgb)), "0x1234abcd"))
+    first = embedder_signature("m", 224, f"Compose(Lambda({to_rgb!r}))", WEIGHTS)
+    other_address = embedder_signature("m", 224, f"Compose(Lambda({to_rgb!r}))".replace(hex(id(to_rgb)), "0x1234abcd"), WEIGHTS)
 
     assert first == other_address
     assert first.startswith("m-224px-")
     # A real preprocessing change at the same size gets a new signature
-    assert preprocess_signature("m", 224, "Normalize(mean=0.5)") != preprocess_signature("m", 224, "Normalize(mean=0.4)")
+    assert embedder_signature("m", 224, "Normalize(mean=0.5)", WEIGHTS) != embedder_signature("m", 224, "Normalize(mean=0.4)", WEIGHTS)
+
+
+def test_embedder_signature_changes_with_the_weights_or_the_loader():
+    base = embedder_signature("m", 224, "Normalize(mean=0.5)", WEIGHTS)
+    other_revision = WEIGHTS.replace("@255fa76e", "@00000000")
+    other_loader = WEIGHTS.replace("timm-1.0.30", "timm-1.0.31")
+
+    assert embedder_signature("m", 224, "Normalize(mean=0.5)", other_revision) != base
+    assert embedder_signature("m", 224, "Normalize(mean=0.5)", other_loader) != base

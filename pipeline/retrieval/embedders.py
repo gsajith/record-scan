@@ -23,21 +23,27 @@ from pipeline import config
 @dataclass(frozen=True)
 class Backbone:
     repo: str
+    revision: str  # a commit on the Hugging Face repo, so an upstream re-upload can't change the weights
     dim: int
     input_px: int
     resizable: bool = False  # DINOv3 uses RoPE, so it runs at any multiple of 16 px
     gated: bool = False
 
 
-# Sizes and sources checked against each model's config.json and card on 2026-10-27
+# Sizes and sources checked against each model's config.json and card on 2026-10-27. The
+# revisions are the snapshots the 2026-10-27 smoke runs downloaded.
 BACKBONES = {
-    "clip-vit-b-32": Backbone("timm/vit_base_patch32_clip_224.openai", 512, 224),
-    "dinov3-vits16": Backbone("facebook/dinov3-vits16-pretrain-lvd1689m", 384, 224, resizable=True, gated=True),
-    "dinov3-vitsplus16": Backbone("facebook/dinov3-vits16plus-pretrain-lvd1689m", 384, 224, resizable=True, gated=True),
-    "dinov3-convnext-tiny": Backbone("facebook/dinov3-convnext-tiny-pretrain-lvd1689m", 768, 224, resizable=True, gated=True),
-    "dinov3-vitb16": Backbone("facebook/dinov3-vitb16-pretrain-lvd1689m", 768, 224, resizable=True, gated=True),
-    "siglip2-b16-256": Backbone("google/siglip2-base-patch16-256", 768, 256),
-    "pe-core-s16": Backbone("timm/vit_pe_core_small_patch16_384.fb", 512, 384),
+    "clip-vit-b-32": Backbone("timm/vit_base_patch32_clip_224.openai", "a6f597a30f7b82c51704746581f9a4e41421e878", 512, 224),
+    "dinov3-vits16": Backbone("facebook/dinov3-vits16-pretrain-lvd1689m", "114c1379950215c8b35dfcd4e90a5c251dde0d32",
+                              384, 224, resizable=True, gated=True),
+    "dinov3-vitsplus16": Backbone("facebook/dinov3-vits16plus-pretrain-lvd1689m", "c93d816fc9e567563bc068f01475bec89cc634a6",
+                                  384, 224, resizable=True, gated=True),
+    "dinov3-convnext-tiny": Backbone("facebook/dinov3-convnext-tiny-pretrain-lvd1689m", "10d30274b4d445111e2d5bf75ac93bbd94db274b",
+                                     768, 224, resizable=True, gated=True),
+    "dinov3-vitb16": Backbone("facebook/dinov3-vitb16-pretrain-lvd1689m", "5931719e67bbdb9737e363e781fb0c67687896bc",
+                              768, 224, resizable=True, gated=True),
+    "siglip2-b16-256": Backbone("google/siglip2-base-patch16-256", "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab", 768, 256),
+    "pe-core-s16": Backbone("timm/vit_pe_core_small_patch16_384.fb", "255fa76e26fdf8daa47e0d607da46b7051879045", 512, 384),
 }
 EMBEDDER_NAMES = tuple(BACKBONES)
 
@@ -69,22 +75,29 @@ def _layer_norm(mod: torch.nn.LayerNorm, x: torch.Tensor) -> torch.Tensor:
 PAD_GRAY = (128, 128, 128)
 
 
-def preprocess_signature(name: str, input_px: int, preprocess: object) -> str:
-    """Name, input size and a hash of the preprocessing, such as "pe-core-s16-384px-7b171a50".
+def _weights(backbone: Backbone, loader: object) -> str:
+    """The weights part of a signature: the pinned commit and the version of the library that builds the model."""
+    return f"{backbone.repo}@{backbone.revision} {loader.__name__}-{loader.__version__}"
+
+
+def embedder_signature(name: str, input_px: int, preprocess: object, weights: str) -> str:
+    """Name, input size and a hash of the preprocessing and the weights, such as
+    "pe-core-s16-384px-176701e0". `weights` is "<repo>@<revision> <loader>-<version>".
 
     Every shard and index records the signature of the embedder that wrote it, and identify
-    refuses an index from another one, so vectors made with old preprocessing are never mixed
-    with new ones. A change to weights or pooling doesn't show up here: give that a new name.
+    refuses an index from another one, so vectors from other preprocessing, another weights
+    revision or another version of the library that builds the model are never mixed. A change
+    to pooling in this repo doesn't show up here: give that a new name.
     """
     text = re.sub(r" at 0x[0-9a-f]+", "", repr(preprocess))  # function reprs carry a memory address
-    return f"{name}-{input_px}px-{hashlib.sha1(text.encode()).hexdigest()[:8]}"
+    return f"{name}-{input_px}px-{hashlib.sha1(f'{text}\n{weights}'.encode()).hexdigest()[:8]}"
 
 
 class Embedder(Protocol):
     name: str
     dim: int
     input_px: int
-    signature: str  # see preprocess_signature
+    signature: str  # see embedder_signature
     model: torch.nn.Module
 
     def preprocess(self, img: Image.Image) -> torch.Tensor: ...
@@ -119,7 +132,8 @@ class TorchEmbedder:
 
 
 class ClipEmbedder(TorchEmbedder):
-    """open_clip ViT-B-32 with the OpenAI weights (cached as timm/vit_base_patch32_clip_224.openai).
+    """open_clip ViT-B-32 with the OpenAI weights, read from the pinned commit of
+    timm/vit_base_patch32_clip_224.openai.
 
     The -quickgelu config matches how OpenAI trained them; plain ViT-B-32 swaps in GELU and
     shifts every vector.
@@ -128,16 +142,25 @@ class ClipEmbedder(TorchEmbedder):
     name = "clip-vit-b-32"
     input_px = 224
 
-    def __init__(self, device: str):
+    def __init__(self, backbone: Backbone, device: str):
         import open_clip  # deferred: importing it pulls in timm and the hub client
+        from huggingface_hub import hf_hub_download
+        from open_clip.pretrained import get_pretrained_cfg
 
         self.device = device
-        self.model, _, self._preprocess = open_clip.create_model_and_transforms("ViT-B-32-quickgelu", pretrained="openai")
+        # open_clip's pretrained="openai" downloads the latest commit, so fetch the pinned file and
+        # pass the OpenAI preprocessing that "openai" would have set
+        cfg = get_pretrained_cfg("ViT-B-32-quickgelu", "openai")
+        weights = hf_hub_download(backbone.repo, "open_clip_model.safetensors", revision=backbone.revision)
+        self.model, _, self._preprocess = open_clip.create_model_and_transforms(
+            "ViT-B-32-quickgelu", pretrained=weights, image_mean=cfg["mean"], image_std=cfg["std"],
+            image_interpolation=cfg["interpolation"], image_resize_mode=cfg["resize_mode"],
+        )
         self.model.to(device).eval()
         if device == "mps":
             exact_layer_norms(self.model)
         self.dim = self.model.visual.output_dim
-        self.signature = preprocess_signature(self.name, self.input_px, self._preprocess)
+        self.signature = embedder_signature(self.name, self.input_px, self._preprocess, _weights(backbone, open_clip))
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._preprocess(img.convert("RGB"))
@@ -155,18 +178,21 @@ class HfEmbedder(TorchEmbedder):
     """
 
     def __init__(self, name: str, backbone: Backbone, input_px: int, device: str):
-        from transformers import AutoImageProcessor, AutoModel  # deferred: a slow import
+        import transformers  # deferred: a slow import
+        from transformers import AutoImageProcessor, AutoModel
 
         self.name = name
         self.dim = backbone.dim
         self.input_px = input_px
         self.device = device
-        self._processor = AutoImageProcessor.from_pretrained(backbone.repo, size={"height": input_px, "width": input_px})
-        self.model = AutoModel.from_pretrained(backbone.repo).to(device).eval()
+        self._processor = AutoImageProcessor.from_pretrained(
+            backbone.repo, revision=backbone.revision, size={"height": input_px, "width": input_px}
+        )
+        self.model = AutoModel.from_pretrained(backbone.repo, revision=backbone.revision).to(device).eval()
         if device == "mps":
             exact_layer_norms(self.model)
         self._siglip = name.startswith("siglip")
-        self.signature = preprocess_signature(name, input_px, self._processor)
+        self.signature = embedder_signature(name, input_px, self._processor, _weights(backbone, transformers))
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._processor(images=img.convert("RGB"), return_tensors="pt")["pixel_values"][0]
@@ -194,7 +220,10 @@ class PeCoreEmbedder(TorchEmbedder):
         import torchvision.transforms as T
 
         self.device = device
-        self.model = timm.create_model(backbone.repo.removeprefix("timm/"), pretrained=True).to(device).eval()
+        # timm's own config for this name, with the weights read from the pinned commit
+        pinned = {"hf_hub_id": f"{backbone.repo}@{backbone.revision}"}
+        self.model = timm.create_model(backbone.repo.removeprefix("timm/"), pretrained=True, pretrained_cfg_overlay=pinned)
+        self.model.to(device).eval()
         # The attention pool feeds its learned query, expanded to the batch without a copy, into a
         # Linear. On MPS (seen on torch 2.8) that aborts the process with "buffer is not large enough";
         # a contiguous copy fixes it and matches CPU output.
@@ -206,7 +235,7 @@ class PeCoreEmbedder(TorchEmbedder):
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
         ])
-        self.signature = preprocess_signature(self.name, self.input_px, self._preprocess)
+        self.signature = embedder_signature(self.name, self.input_px, self._preprocess, _weights(backbone, timm))
 
     def preprocess(self, img: Image.Image) -> torch.Tensor:
         return self._preprocess(img.convert("RGB"))
@@ -227,7 +256,7 @@ def load_embedder(name: str, device: str | None = None, input_px: int | None = N
     device = device or config.device()
     try:
         if name == "clip-vit-b-32":
-            return ClipEmbedder(device)
+            return ClipEmbedder(backbone, device)
         if name == "pe-core-s16":
             return PeCoreEmbedder(backbone, device)
         return HfEmbedder(name, backbone, px, device)
