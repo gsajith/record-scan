@@ -22,6 +22,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # Fails when someone updates requirements.lock but not requirements-ci.lock
+      - run: diff <(grep -oE '^[a-z0-9_.-]+==[^ ]+' requirements.lock | sort) <(grep -oE '^[a-z0-9_.-]+==[^ ]+' requirements-ci.lock | sed 's/+cpu//' | sort)
       # requirements-ci.lock: the Mac lock's versions, resolved for Linux with CPU torch (torch from
       # PyPI on Linux pulls in gigabytes of CUDA libraries)
       - run: uv venv && uv pip install --torch-backend cpu --require-hashes -r requirements-ci.lock
