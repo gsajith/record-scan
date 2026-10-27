@@ -1,6 +1,7 @@
 name: Tests
 
-# The fast pipeline tests and the labeler's lint, typecheck and tests, on every PR and on main.
+# REVIEW.md's focus list, the fast pipeline tests and the labeler's lint, typecheck and tests, on every PR
+# and on main.
 # Slow tests (model downloads) and MPS checks run on the Mac only.
 on:
   pull_request:
@@ -11,6 +12,18 @@ permissions:
   contents: read
 
 jobs:
+  review-md:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The reviewer evals copy REVIEW.md into old commits, so a PR or issue number in its focus
+      # list would hand the reviewer the answer
+      - run: |
+          if sed -n '/^## Focus/,$p' REVIEW.md | grep -nE '#[0-9]+'; then
+            echo "::error file=REVIEW.md::The focus list names a PR or issue number. Describe the bug class instead."
+            exit 1
+          fi
+
   pipeline:
     runs-on: ubuntu-latest
     defaults:

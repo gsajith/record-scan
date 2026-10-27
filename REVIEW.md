@@ -32,7 +32,7 @@ An agent may not merge a PR whose diff touches any of these. It stops and hands 
 
 ## Focus
 
-The numbers are stable: the plan and commit messages cite them as "Review focus N". Each item names the plan task that owns its test (`docs/superpowers/plans/2026-10-24-identifier-plan.md`). When a shipped bug shows a class missing here, add it as a new number and add the bug to the evals. Describe the class, not the PRs that shipped it: the evals copy this file into old commits, and a PR number would hand the reviewer the answer.
+The numbers are stable: the plan and commit messages cite them as "Review focus N". Each item names the plan task that owns its test (`docs/superpowers/plans/2026-10-24-identifier-plan.md`). When a shipped bug shows a class missing here, add it as a new number and add the bug to the evals. Describe the class, not the PRs that shipped it: the evals copy this file into old commits, and a PR number would hand the reviewer the answer. CI fails on a `#<number>` in this section.
 
 1. Two labels for one image: the labeler appends a new line and the loader keeps the latest line per `sha1`; a re-label never silently keeps the old answer. Test in Task 2.
 2. Split drift: the Python and TypeScript `split_for(sha1, group)` return the same answer for the same input; the same five literal sha1 values and the same three published FNV-1a vectors are asserted in both suites. Tests in Tasks 2 and 3.
