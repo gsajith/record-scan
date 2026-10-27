@@ -288,8 +288,11 @@ Progress: issue #16 landed `eval.py`, the locked eval rules, in a commit of its 
 
 **Interfaces (produces):**
 ```python
-# shard_and_hash.py   CLI: python -m pipeline.gallery.shard_and_hash [--prefixes ...|--all] [--workers 6]
-def process_prefix(prefix: str, out_dir: Path, workers: int) -> tuple[int, int]   # reads IMAGE_ROOT/<prefix>/*.jpg sequentially; writes out_dir/<prefix>.tar (WebDataset: <mbid>.jpg at 256 px short side, q90) and out_dir/<prefix>.phash.npy (structured: mbid U36, phash uint64); touches <prefix>.done; returns (ok, skipped)
+# shard_and_hash.py   CLI: python -m pipeline.gallery.shard_and_hash (--prefixes ...|--all) [--workers 6]
+def process_prefix(prefix: str, files: list[str], out_dir: Path, workers: int) -> tuple[int, int]   # files from Catalog.cover_files(prefix), read in name order; writes out_dir/<prefix>.tar (WebDataset: <file stem>.jpg at 256 px short side, smaller covers kept as is, q90) and out_dir/<prefix>.phash.npy (structured: key U64 = file stem, mbid is key[:36]; phash uint64); <prefix>.done holds the recipe and a hash of files; returns (written, skipped)
+def is_done(prefix: str, files: list[str], out_dir: Path) -> bool
+# catalog.py
+Catalog.cover_files(prefix) -> list[str]                                   # files in one prefix folder, sorted
 # cluster_duplicates.py   CLI: python -m pipeline.gallery.cluster_duplicates [--max-distance 8]
 def cluster(phash_files: list[Path], max_distance: int) -> dict[str, int]   # exact-hash union, then Hamming <= max_distance via 4-way multi-index hashing; writes out_dir/clusters.parquet (mbid, cluster_id, cluster_size) and prints N, cluster count, size histogram
 ```
@@ -298,6 +301,12 @@ List covers from the catalog's `covers` table (Task 6), not by globbing the driv
 - [ ] Step 1: Failing tests on a tmp image root with three prefixes, one corrupt file, two identical covers under different mbids and one near-duplicate: shard contains the good files at 256 px, errors logged, `.done` resumes, clusters group the identical pair and the near-duplicate at distance <= 8 and not an unrelated image.
 - [ ] Step 2: Run, FAIL. Step 3: Implement. Step 4: tests pass. Real run after H1: `--prefixes 00` first, report time and sizes in `docs/results/<date>-gallery-pass.md`, then `--all` under `nohup caffeinate -i`, then `cluster_duplicates`. Record N (deduplicated), cluster count, and the size histogram in the same results file.
 - [ ] Step 5: Commit `feat(pipeline): gallery pass with 256px shards, phash and duplicate clusters`.
+
+Progress: #19 landed `shard_and_hash.py` and `Catalog.cover_files`, with tests for the shard, the hashes, resume and a drive that drops mid-prefix; the clustering half of Steps 1 to 4 is #20. Notes:
+- The pHash is computed locally with scipy as `imagehash.phash` does (bit-identical on 200 real covers), so `imagehash` isn't a dependency. It hashes the 256 px image before JPEG encoding.
+- A `.done` marker holds `RECIPE` and a hash of the prefix's cover list, so a catalog update redoes every prefix whose list changed. Change `RECIPE` when the decode, resize, encode or hash changes.
+- If the drive drops, the first unreadable cover stops the run and the prefix stays pending. A leftover `<prefix>.tar.tmp` is overwritten on the next run.
+- Prefix 00: 15,375 covers in 157 s, about 11.3 h for the rest, about 92 GB of shards. Numbers in `docs/results/2026-10-27-gallery-pass.md`.
 
 ### Task 6: new covers since the dump (D11, done)
 

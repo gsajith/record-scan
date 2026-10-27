@@ -88,10 +88,9 @@ def test_process_prefix_hashes_each_cover_so_lookalikes_land_close(drive, tmp_pa
 
 def test_a_done_prefix_is_skipped_until_its_cover_list_changes(drive, tmp_path):
     out = tmp_path / "gallery256"
-    assert not is_done(out, "00", drive["00"])
+    assert not is_done("00", drive["00"], out)
     process_prefix("00", drive["00"], out, workers=2)
-    assert is_done(out, "00", drive["00"])
-    assert not is_done(out, "01", drive["01"])
+    assert is_done("00", drive["00"], out)
 
     shard_before = (out / "00.tar").read_bytes()
     assert process_prefix("00", drive["00"], out, workers=2) == (0, 0)
@@ -99,22 +98,23 @@ def test_a_done_prefix_is_skipped_until_its_cover_list_changes(drive, tmp_path):
 
     # A catalog update drops a cover: the prefix is redone with the new list
     fewer = [f for f in drive["00"] if SMALL not in f]
-    assert not is_done(out, "00", fewer)
+    assert not is_done("00", fewer, out)
     assert process_prefix("00", fewer, out, workers=2) == (3, 1)
     assert f"{SMALL}.jpg" not in read_shard(out / "00.tar")
 
 
 def test_a_drive_that_drops_mid_prefix_leaves_the_prefix_pending(drive, tmp_path, monkeypatch):
     out = tmp_path / "gallery256"
-    real_shrink = shard_and_hash.shrink
+    real_shrink = shard_and_hash.shrink_and_hash
 
     def shrink_then_unmount(path):
         result = real_shrink(path)
         shutil.rmtree(config.IMAGE_ROOT, ignore_errors=True)  # the drive goes away after the first cover
         return result
 
-    monkeypatch.setattr(shard_and_hash, "shrink", shrink_then_unmount)
+    monkeypatch.setattr(shard_and_hash, "shrink_and_hash", shrink_then_unmount)
     with pytest.raises(SystemExit):
         process_prefix("00", drive["00"], out, workers=1)
-    assert not is_done(out, "00", drive["00"])
+    assert not is_done("00", drive["00"], out)
     assert not (out / "00.tar").exists()
+    assert not (out / "00.errors.log").exists()  # stopped at the first unreadable cover, logged nothing
