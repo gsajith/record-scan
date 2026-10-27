@@ -1,4 +1,3 @@
-import io
 import shutil
 import tarfile
 
@@ -47,20 +46,21 @@ def drive(tmp_path, reload_config):
 
 def read_shard(path):
     with tarfile.open(path) as tar:
-        return {m.name: Image.open(io.BytesIO(tar.extractfile(m).read())) for m in tar.getmembers()}
+        return {m.name: tar.extractfile(m).read() for m in tar.getmembers()}
 
 
-def test_process_prefix_shards_good_covers_at_256_and_logs_the_corrupt_one(drive, tmp_path):
-    out = tmp_path / "gallery256"
+def test_process_prefix_shards_the_original_bytes_and_logs_the_corrupt_one(drive, tmp_path):
+    out = tmp_path / "gallery"
 
     assert process_prefix("00", drive["00"], out, workers=2) == (4, 1)
 
     shard = read_shard(out / "00.tar")
     assert set(shard) == {f"{k}.jpg" for k in (SQUARE, EXTRA, WIDE, SMALL)}
-    assert shard[f"{SQUARE}.jpg"].size == (256, 256)
-    assert shard[f"{WIDE}.jpg"].size == (384, 256)
-    assert shard[f"{SMALL}.jpg"].size == (200, 200)  # never upscaled
-    assert all(img.format == "JPEG" for img in shard.values())
+    for name, data in shard.items():  # lossless: sized copies are made from these later
+        assert data == (config.IMAGE_ROOT / "00" / name).read_bytes()
+    rows = np.load(out / "00.covers.npy")
+    sizes = {k: (int(w), int(h)) for k, w, h in zip(rows["key"], rows["width"], rows["height"])}
+    assert sizes == {SQUARE: (500, 500), EXTRA: (500, 500), WIDE: (600, 400), SMALL: (200, 200)}
     assert CORRUPT in (out / "00.errors.log").read_text()
 
 
@@ -74,12 +74,12 @@ def bits_apart(a, b):
 
 
 def test_process_prefix_hashes_each_cover_so_lookalikes_land_close(drive, tmp_path):
-    out = tmp_path / "gallery256"
+    out = tmp_path / "gallery"
     for prefix in ("00", "01", "02"):
         process_prefix(prefix, drive[prefix], out, workers=2)
 
-    hashes = load_hashes(out / "00.phash.npy") | load_hashes(out / "01.phash.npy") | load_hashes(out / "02.phash.npy")
-    assert np.load(out / "00.phash.npy")["phash"].dtype == np.uint64
+    hashes = load_hashes(out / "00.covers.npy") | load_hashes(out / "01.covers.npy") | load_hashes(out / "02.covers.npy")
+    assert np.load(out / "00.covers.npy")["phash"].dtype == np.uint64
     assert set(hashes) == {SQUARE, EXTRA, WIDE, SMALL, COPY, OTHER}
     assert bits_apart(hashes[SQUARE], hashes[COPY]) <= 8
     assert bits_apart(hashes[SQUARE], hashes[OTHER]) > 16
@@ -87,7 +87,7 @@ def test_process_prefix_hashes_each_cover_so_lookalikes_land_close(drive, tmp_pa
 
 
 def test_a_done_prefix_is_skipped_until_its_cover_list_changes(drive, tmp_path):
-    out = tmp_path / "gallery256"
+    out = tmp_path / "gallery"
     assert not is_done("00", drive["00"], out)
     process_prefix("00", drive["00"], out, workers=2)
     assert is_done("00", drive["00"], out)
@@ -112,15 +112,15 @@ def test_a_done_prefix_is_skipped_until_its_cover_list_changes(drive, tmp_path):
 
 
 def test_a_drive_that_drops_mid_prefix_leaves_the_prefix_pending(drive, tmp_path, monkeypatch):
-    out = tmp_path / "gallery256"
-    real_shrink = shard_and_hash.shrink_and_hash
+    out = tmp_path / "gallery"
+    real_read = shard_and_hash.read_and_hash
 
-    def shrink_then_unmount(path):
-        result = real_shrink(path)
+    def read_then_unmount(path):
+        result = real_read(path)
         shutil.rmtree(config.IMAGE_ROOT, ignore_errors=True)  # the drive goes away after the first cover
         return result
 
-    monkeypatch.setattr(shard_and_hash, "shrink_and_hash", shrink_then_unmount)
+    monkeypatch.setattr(shard_and_hash, "read_and_hash", read_then_unmount)
     with pytest.raises(SystemExit):
         process_prefix("00", drive["00"], out, workers=1)
     assert not is_done("00", drive["00"], out)
@@ -129,7 +129,7 @@ def test_a_drive_that_drops_mid_prefix_leaves_the_prefix_pending(drive, tmp_path
 
 
 def test_a_read_error_leaves_the_prefix_pending_but_a_missing_file_does_not(drive, tmp_path):
-    out = tmp_path / "gallery256"
+    out = tmp_path / "gallery"
     wide = config.IMAGE_ROOT / "00" / f"{WIDE}.jpg"
     files = drive["00"] + ["00/00000000-0000-4000-8000-0000000000ff.jpg"]  # listed, never downloaded
     wide.chmod(0)  # stands in for an I/O error on the USB drive
@@ -146,9 +146,9 @@ def test_a_read_error_leaves_the_prefix_pending_but_a_missing_file_does_not(driv
 
 
 def test_a_redo_with_a_read_error_does_not_inherit_the_old_done_marker(drive, tmp_path):
-    out = tmp_path / "gallery256"
+    out = tmp_path / "gallery"
     process_prefix("00", drive["00"], out, workers=2)
-    (out / "00.phash.npy").unlink()
+    (out / "00.covers.npy").unlink()
     assert not is_done("00", drive["00"], out)  # lost hashes, like a lost shard, mean not done
 
     wide = config.IMAGE_ROOT / "00" / f"{WIDE}.jpg"
