@@ -1,18 +1,19 @@
 """What gets exported: an embedder's forward pass from preprocessed pixels to a unit vector.
 
 Preprocessing (resize and normalize) stays outside the export; the phone app does it. Each
-export gets a `<file>.json` beside it naming the embedder signature that produced it, and
-parity refuses an export whose signature no longer matches the embedder (Review focus 7). As
-with embeddings, the signature covers the name, input size and preprocessing: a change to
-weights or pooling needs a new model name.
+export gets a `<file>.json` beside it holding its export key, and parity refuses an export
+whose key no longer matches (Review focus 7), so an old export is never scored against a
+reference that has since changed.
 """
 
+import hashlib
 import json
 from pathlib import Path
 
 import torch
 
 from pipeline import config
+from pipeline.retrieval import embedders
 from pipeline.retrieval.embedders import Embedder, load_embedder
 
 
@@ -42,14 +43,22 @@ def sidecar(exported: Path) -> Path:
     return exported.with_name(exported.name + ".json")
 
 
+def export_key(embedder: Embedder) -> str:
+    """Everything that shapes the PyTorch reference: the embedder signature (name, input size,
+    preprocessing), the torch version, and the code that runs the model (this file and
+    embedders.py, so an edit to features() or pooling counts)."""
+    code = Path(embedders.__file__).read_bytes() + Path(__file__).read_bytes()
+    return f"{embedder.signature} torch-{torch.__version__} code-{hashlib.sha1(code).hexdigest()[:8]}"
+
+
 def write_sidecar(exported: Path, embedder: Embedder, **extra: str) -> None:
-    info = {"signature": embedder.signature, "torch": torch.__version__, **extra}
+    info = {"key": export_key(embedder), **extra}
     sidecar(exported).write_text(json.dumps(info, indent=2) + "\n")
 
 
 def check_sidecar(exported: Path, embedder: Embedder) -> None:
     path = sidecar(exported)
-    found = json.loads(path.read_text())["signature"] if path.is_file() else None
-    if found != embedder.signature:
-        raise SystemExit(f"{exported.name} was exported by {found or 'an unknown embedder'}, "
-                         f"not {embedder.signature}. Export it again.")
+    found = json.loads(path.read_text()).get("key") if path.is_file() else None
+    if found != export_key(embedder):
+        raise SystemExit(f"{exported.name} was exported as {found or 'an unknown export'}, "
+                         f"not {export_key(embedder)}. Export it again.")

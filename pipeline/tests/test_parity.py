@@ -42,3 +42,16 @@ def test_parity_catches_an_export_that_computes_something_else(export, tmp_path)
     exported = export(Reversed(), torch.zeros(1, 3, 8, 8), tmp_path / "reversed")
 
     assert mean_cosine(Identity(), exported, inputs()) < 0.99
+
+
+def test_parity_refuses_an_export_from_another_embedder(tmp_path):
+    from types import SimpleNamespace
+
+    from pipeline.export.model import check_sidecar, write_sidecar
+
+    exported = tmp_path / "model.pte"
+    write_sidecar(exported, SimpleNamespace(signature="dinov3-vits16-224px-aaaaaaaa"))
+
+    check_sidecar(exported, SimpleNamespace(signature="dinov3-vits16-224px-aaaaaaaa"))
+    with pytest.raises(SystemExit, match="Export it again"):
+        check_sidecar(exported, SimpleNamespace(signature="dinov3-vits16-224px-bbbbbbbb"))

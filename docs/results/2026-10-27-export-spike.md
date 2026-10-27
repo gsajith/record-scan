@@ -32,7 +32,8 @@ cannot be applied yet.
   three later rounds put both at 4.7 to 5.0 ms (`units_probe.py`, below).
 
 Every script behind a number here is in `docs/results/2026-10-27-export-spike/`, as it ran,
-except that `load` was since renamed `load_exportable`. Run each from the repo root with the
+except that `load` was since renamed `load_exportable`. Exports from the run carry the
+old sidecar format, so rerun `spike.sh` before scoring them again with `parity`. Run each from the repo root with the
 pipeline venv's python. The probes write scratch exports to `$L`, so set `L=$(mktemp -d)`
 first:
 
@@ -46,13 +47,15 @@ first:
 | `xnn_probe.py` | `PYTHONPATH=. python docs/results/2026-10-27-export-spike/xnn_probe.py` | XNNPACK call and op counts, thread sweep |
 | `xnn_eager.py` | `L=$L PYTHONPATH=. python docs/results/2026-10-27-export-spike/xnn_eager.py` | eager attention under XNNPACK |
 | `units_probe.py` | `PYTHONPATH=. python docs/results/2026-10-27-export-spike/units_probe.py` | PE-Core per compute unit, ConvNeXt repeat timings |
+| `fused_sdpa.py` | `L=$L PYTHONPATH=. python docs/results/2026-10-27-export-spike/fused_sdpa.py` | the fused iOS 18 attention op in fp16 and fp32 |
 
 Export sizes are `du -sh` over `EXPORTS_DIR`.
 
 `to_coreml` times 50 predictions with every compute unit allowed, after five warm-up runs, and
 counts the ops Core ML prefers to place on each device. `to_executorch` times 50 runs on the
 Mac CPU through ExecuTorch's Python runtime. Parity is the mean cosine between the export and
-the PyTorch embedder on CPU, one image at a time.
+the PyTorch embedder on CPU. The export runs one image at a time, as the phone does; PyTorch
+runs the 20 as one batch.
 
 ## Results
 
@@ -98,9 +101,16 @@ Tried and ruled out on DINOv3 ViT-S:
 | Variant | Parity | Mac median ms | Ops by device |
 |---|---|---|---|
 | fp16, iOS 17 target | 0.159275 | 3.97 | Neural Engine 522, CPU 5 |
-| fp16, iOS 18 target (native attention op) | 0.159275 | 3.90 | Neural Engine 522, CPU 5 |
+| fp16, iOS 18 target, attention still as matmul and softmax | 0.159275 | 3.90 | Neural Engine 522, CPU 5 |
+| fp16, iOS 18 fused `scaled_dot_product_attention` op | 0.130819 | 4.37 | Neural Engine 486, CPU 5 |
+| fp32, iOS 18 fused `scaled_dot_product_attention` op | 1.000000 | 6.67 | GPU 490 |
 | fp16, query scaled before `q·k` | 0.159275 | 3.97 | Neural Engine 522, CPU 5 |
 | fp16, matmul and softmax in fp32 (`fp16-attn32`) | 0.999995 | 9.44 | GPU 558, Neural Engine 17 |
+
+coremltools emits the fused op only for an iOS 18 target when the attention call passes no
+scale. Transformers always passes one, equal to the default, so the plain iOS 18 export kept
+24 matmuls and 12 softmaxes. `fused_sdpa.py` drops the scale (exact, since it is the default)
+and gets all 12 attention blocks fused; fp16 still fails.
 
 So on iPhone, DINOv3 ViTs run on the GPU or not at all, unless fine-tuning in Phase B tames
 these scores. The Neural Engine stays open to ConvNeXt and PE-Core. Device timing has to tell

@@ -40,7 +40,8 @@ def load_exported(path: Path) -> Callable[[torch.Tensor], np.ndarray]:
 
 @torch.no_grad()
 def mean_cosine(reference: torch.nn.Module, exported: Path, inputs: torch.Tensor) -> float:
-    """Run each input through both, one at a time as the phone does, and average the cosines."""
+    """Average cosine between the two. The export runs one input at a time, as the phone does;
+    PyTorch runs them as one batch."""
     run = load_exported(exported)
     want = reference.eval()(inputs).numpy()
     got = np.concatenate([run(x[None]).reshape(1, -1) for x in inputs])
@@ -78,7 +79,9 @@ def latency_ms(exported: Path, example: torch.Tensor, runs: int = 50) -> tuple[f
 def gallery_sample(n: int = 20) -> list[Path]:
     """n covers spread evenly over prefix 00 on the drive, the same n on every run."""
     covers = sorted(p for p in (config.require_image_root() / "00").glob("*.jpg") if config.is_uuid(p.stem))
-    return covers[:: max(1, len(covers) // n)][:n]
+    if len(covers) < n:
+        raise SystemExit(f"Prefix 00 has {len(covers)} covers, fewer than the {n} asked for")
+    return covers[:: len(covers) // n][:n]
 
 
 def main() -> None:

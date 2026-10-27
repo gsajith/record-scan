@@ -24,7 +24,7 @@ PRECISIONS = ("fp32", "fp16", "fp16-attn32")
 
 
 def export_coreml(module: torch.nn.Module, example: torch.Tensor, out: Path, precision: str = "fp32") -> Path:
-    """Convert through torch.export, the same graph ExecuTorch lowers, so one trace serves both."""
+    """Convert through torch.export, the same front end ExecuTorch uses, so both see one graph."""
     import coremltools as ct  # deferred: a slow import
 
     # coremltools converts only the ATen dialect, so lower the export's training dialect first
