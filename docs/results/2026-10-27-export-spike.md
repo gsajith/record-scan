@@ -28,16 +28,26 @@ cannot be applied yet.
   one per line: `00ea595de634`.
 - Load average 15.8 at the start and 13.1 at the end, on 10 cores. Other sessions shared the
   Mac, so timings are noisy, CPU timings most of all. DINOv3 ConvNeXt's `fp16` and
-  `fp16-attn32` packages place every op identically, yet timed 6.25 and 4.48 ms.
+  `fp16-attn32` packages place every op identically, yet timed 6.25 and 4.48 ms in the run;
+  three later rounds put both at 4.7 to 5.0 ms (`units_probe.py`, below).
 
-The commands, from the repo root, for each model (`px` is 224 for DINOv3 and 384 for PE-Core,
-its only size):
+Every script behind a number here is in `docs/results/2026-10-27-export-spike/`, as it ran,
+except that `load` was since renamed `load_exportable`. Run each from the repo root with the
+pipeline venv's python. The probes write scratch exports to `$L`, so set `L=$(mktemp -d)`
+first:
 
-```sh
-python -m pipeline.export.to_coreml --model $m --px $px --precision fp32|fp16|fp16-attn32
-python -m pipeline.export.to_executorch --model $m --px $px --backend xnnpack
-python -m pipeline.export.parity --model $m --exported $EXPORTS_DIR/$m-$px-<variant>.<mlpackage|pte>
-```
+| Script | Command | Numbers |
+|---|---|---|
+| `spike.sh` | `docs/results/2026-10-27-export-spike/spike.sh` | the Results table |
+| `torch_drift.py` | `PYTHONPATH=. python docs/results/2026-10-27-export-spike/torch_drift.py` | torch 2.9.1 against torch 2.8 prefix-00 embeddings, 200 covers per model: cosine 1.000000 for all seven, also after `features()` was added |
+| `fp16_probe.py` | `PYTHONPATH=. python docs/results/2026-10-27-export-spike/fp16_probe.py` | largest activations, PyTorch fp16 on CPU and MPS |
+| `fp16_fix.py` | `L=$L PYTHONPATH=. python docs/results/2026-10-27-export-spike/fp16_fix.py` | iOS 17 and 18 targets, `fp16-attn32` |
+| `prescale.py` | `L=$L PYTHONPATH=. python docs/results/2026-10-27-export-spike/prescale.py` | attention-score maxima, query scaled first (its maxima carry over between models, so only ViT-S's are quoted) |
+| `xnn_probe.py` | `PYTHONPATH=. python docs/results/2026-10-27-export-spike/xnn_probe.py` | XNNPACK call and op counts, thread sweep |
+| `xnn_eager.py` | `L=$L PYTHONPATH=. python docs/results/2026-10-27-export-spike/xnn_eager.py` | eager attention under XNNPACK |
+| `units_probe.py` | `PYTHONPATH=. python docs/results/2026-10-27-export-spike/units_probe.py` | PE-Core per compute unit, ConvNeXt repeat timings |
+
+Export sizes are `du -sh` over `EXPORTS_DIR`.
 
 `to_coreml` times 50 predictions with every compute unit allowed, after five warm-up runs, and
 counts the ops Core ML prefers to place on each device. `to_executorch` times 50 runs on the
@@ -64,6 +74,12 @@ the PyTorch embedder on CPU, one image at a time.
 | | Core ML fp16 | 0.999824 | 16.81 | 17.02 | Neural Engine 546, CPU 1 | pass |
 | | Core ML fp16-attn32 | 0.999972 | 11.91 | 12.26 | GPU 567, CPU 20, Neural Engine 11 | pass |
 | | XNNPACK | 1.000000 | 226.92 | 325.41 | | pass |
+
+PE-Core's fp16 package is slower on the Neural Engine than on this Mac's GPU, and that holds
+up with each compute unit pinned, three rounds each (`units_probe.py`, load average 8 to 9):
+16.6 to 16.7 ms on CPU and Neural Engine, 10.0 to 10.9 ms on CPU and GPU, 16.5 to 16.9 ms
+with all units (Core ML picks the Neural Engine). The fp32 package on the GPU takes 11.3 to
+11.5 ms. The M1 Max has a 32-core GPU, so an iPhone may rank the two differently; #28 decides.
 
 Export sizes: fp32 packages and `.pte` files are 83 MB (ViT-S), 110 MB (ViT-S+), 106 MB
 (ConvNeXt) and 91 MB (PE-Core); fp16 packages are half that.

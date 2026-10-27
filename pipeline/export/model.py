@@ -2,7 +2,9 @@
 
 Preprocessing (resize and normalize) stays outside the export; the phone app does it. Each
 export gets a `<file>.json` beside it naming the embedder signature that produced it, and
-parity refuses an export whose signature no longer matches the embedder (Review focus 7).
+parity refuses an export whose signature no longer matches the embedder (Review focus 7). As
+with embeddings, the signature covers the name, input size and preprocessing: a change to
+weights or pooling needs a new model name.
 """
 
 import json
@@ -24,7 +26,7 @@ class EmbedderModule(torch.nn.Module):
         return torch.nn.functional.normalize(self._features(pixels).float(), dim=-1)
 
 
-def load(name: str, px: int | None) -> tuple[Embedder, EmbedderModule, torch.Tensor]:
+def load_exportable(name: str, px: int | None) -> tuple[Embedder, EmbedderModule, torch.Tensor]:
     """The embedder on CPU, its exportable module, and a one-image example input."""
     embedder = load_embedder(name, device="cpu", input_px=px)
     example = torch.zeros(1, 3, embedder.input_px, embedder.input_px)
