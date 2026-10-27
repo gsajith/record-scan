@@ -1,3 +1,4 @@
+from dataclasses import asdict
 import json
 
 import pytest
@@ -44,8 +45,16 @@ def test_load_checks_the_split_against_the_group(tmp_path):
     sha1 = next(s for s, split in SPLIT_VECTORS if split == "eval")
     append_label(set_dir, make_label(sha1, group="a"))  # "a" puts the whole group in sim
     assert load_labels(set_dir)[0].split == "sim"
+    # A hand-edited line that moves the photo back to eval is refused on load
+    bad = asdict(make_label(sha1, group="a")) | {"split": "eval"}
+    (set_dir / "labels.jsonl").write_text(json.dumps(bad) + "\n")
     with pytest.raises(ValueError, match="split"):
-        append_label(set_dir, make_label(sha1, group="a", split="eval"))
+        load_labels(set_dir)
+
+
+def test_empty_group_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="group"):
+        append_label(tmp_path / "wild", make_label(SPLIT_VECTORS[0][0], group=""))
 
 
 def test_gold_is_always_eval():

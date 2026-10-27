@@ -75,6 +75,8 @@ def _validate(label: Label, set_name: str) -> None:
         raise ValueError(f"unknown tags {bad}")
     if label.license not in LICENSES:
         raise ValueError(f"unknown license {label.license!r}")
+    if label.group is not None and not label.group.strip():
+        raise ValueError("group must not be empty; use None for a photo with no source group")
     if label.split != split_for(set_name, label.sha1, label.group):
         raise ValueError(f"split {label.split!r} does not match the rule for {label.sha1} in group {label.group!r}")
     if label.kind == "positive" and not (label.mbid and config.is_uuid(label.mbid)):

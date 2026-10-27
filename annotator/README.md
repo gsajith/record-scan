@@ -40,7 +40,8 @@ the one after each save.
 - **Wild videos** split by source, not by frame (D9): name a clip `<group>~<video>`, for example
   `yt-UC1234~abcd-s01.mp4` for a YouTube channel, and every frame of that group lands in the same
   half, so one store and camera never end up in both. The server reads the group from the frame
-  name; a photo without one splits by its own hash.
+  name. A clip without `~` groups by its own name, so its frames still share a half; only a
+  pasted or dropped photo splits by its own hash.
 
 The album, the kind and the `crate` and `rack` tags carry over between frames of the same video,
 so after the first frame you usually just press Enter. Other tags, such as blur or glare, describe

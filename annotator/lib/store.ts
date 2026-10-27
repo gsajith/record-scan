@@ -21,6 +21,7 @@ import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
 import { fingerprint, isNearDuplicate } from "./duplicates";
+import { groupOfFrame } from "./frames";
 import { checkLabel, SETS, type Label, type Split } from "./labels";
 
 const MAX_SIDE = 1600;
@@ -107,12 +108,15 @@ export async function ingestWild(
  * Where each photo came from, one JSON line per fact in <set>/sources.jsonl: the inbox frame it
  * was taken from, or a wild photo's address and fingerprint.
  */
-// group: the source a frame's video came from, from a clip named <group>~<video> (lib/queue.ts)
-export type Source = { sha1: string; frame?: string; source_url?: string; phash?: string; group?: string };
+export type Source = { sha1: string; frame?: string; source_url?: string; phash?: string };
 
-/** The photo's source group, if its frame came from a clip named <group>~<video>. */
+/**
+ * The group a photo splits with: from the inbox frame it first came from (lib/frames.ts), or
+ * null for a pasted or dropped photo, which splits by its own hash.
+ */
 export function groupOf(setDir: string, sha1: string): string | null {
-  return readSources(setDir).get(sha1)?.group ?? null;
+  const frame = readSources(setDir).get(sha1)?.frame;
+  return frame ? groupOfFrame(frame) : null;
 }
 
 export function appendSource(setDir: string, source: Source): void {
@@ -133,7 +137,12 @@ export function readSources(setDir: string): Map<string, Source> {
   for (const line of text.split("\n")) {
     try {
       const source = JSON.parse(line) as Source;
-      if (typeof source.sha1 === "string") sources.set(source.sha1, { ...sources.get(source.sha1), ...source });
+      if (typeof source.sha1 === "string") {
+        const before = sources.get(source.sha1);
+        // The first frame stays: the same image met again in another clip must not move the
+        // photo to that clip's group, and so between halves
+        sources.set(source.sha1, { ...before, ...source, frame: before?.frame ?? source.frame });
+      }
     } catch {
       // skip a torn line
     }
