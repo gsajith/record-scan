@@ -61,6 +61,7 @@ def _layer_norm(mod: torch.nn.LayerNorm, x: torch.Tensor) -> torch.Tensor:
     shape = (-1, 1, 1) if channels_first else (-1,)
     return x * mod.weight.view(shape) + mod.bias.view(shape)
 
+
 PAD_GRAY = (128, 128, 128)
 
 
