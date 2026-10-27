@@ -64,7 +64,8 @@ export default function LabelerPage() {
   const [results, setResults] = useState<Result[]>([]);
   const [active, setActive] = useState(0);
   const [searchError, setSearchError] = useState<string | null>(null);
-  // The album and kind carry over between frames of the same video, which show one record
+  // The album, kind and tags carry over between frames of the same video, so a flipping
+  // video's crate tag is set once
   const [picked, setPicked] = useState<Result | null>(null);
   const [kind, setKind] = useState<Kind>("positive");
   const [tags, setTags] = useState<Tag[]>([]);
@@ -77,18 +78,18 @@ export default function LabelerPage() {
   const [focusSearchTick, setFocusSearchTick] = useState(0);
   const focusSearch = useCallback(() => setFocusSearchTick((n) => n + 1), []);
 
-  // Tags and notes describe one photo, so they start empty on the next
+  // Notes and the search describe one photo, so they start empty on the next
   const clearPerPhoto = useCallback(() => {
-    setTags([]);
     setNotes("");
     setQuery("");
     setResults([]);
   }, []);
 
-  // A new record: forget the album and kind, and get ready to search
+  // A new video or pasted photo: forget the album, kind and tags, and get ready to search
   const startNewRecord = useCallback(() => {
     setPicked(null);
     setKind("positive");
+    setTags([]);
     focusSearch();
   }, [focusSearch]);
 

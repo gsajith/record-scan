@@ -38,8 +38,10 @@ the one after each save.
   one already added this way is refused, so one picture can't land in both the sim and eval
   halves. Photos placed in `wild/inbox/` skip that check.
 
-The album and kind carry over between frames of the same video, so after the first frame you
-add tags and press Enter. They reset for a new video or a pasted photo.
+The album, kind and tags carry over between frames of the same video, so after the first frame
+you press Enter, or toggle a tag that changed first. In a flipping video, press / to pick the
+next record when the front one changes; the `crate` tag stays on. They reset for a new video or
+a pasted photo.
 
 | Key | Does |
 |---|---|
