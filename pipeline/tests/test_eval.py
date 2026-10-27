@@ -85,7 +85,7 @@ def test_is_hit_rules(tmp_path, catalog):
     add_label(gold, sha(4), "unknown")
     add_label(gold, sha(5), "positive", NOT_IN_CATALOG)
 
-    abbey, plus, negative, unknown = load_eval_set(gold, catalog, clusters={ABBEY: 7, LOOKALIKE: 7, DEBUT: 8})
+    abbey, plus, negative, unknown, gone = load_eval_set(gold, catalog, clusters={ABBEY: 7, LOOKALIKE: 7, DEBUT: 8})
 
     # The labeled release, any release of the same album, and lookalikes in its duplicate cluster
     assert is_hit(ABBEY, abbey) and is_hit(ABBEY_REISSUE, abbey) and is_hit(LOOKALIKE, abbey)
@@ -94,6 +94,8 @@ def test_is_hit_rules(tmp_path, catalog):
     assert is_hit(PLUS, plus) and not is_hit(DIVIDE, plus)
     # Nothing is a hit for a photo with no answer in the catalog
     assert not is_hit(ABBEY, negative) and not is_hit(ABBEY, unknown)
+    # A positive whose release left the catalog stays in the eval as a certain miss, not dropped
+    assert gone.label.kind == "positive" and not is_hit(NOT_IN_CATALOG, gone)
 
 
 def row(kind, top1, hit_rank=None, tags=(), file="/photos/x.jpg"):
@@ -123,6 +125,13 @@ def test_eval_report_metrics_and_slices():
     assert report.pos_min_top1 == 0.5
     # Ranked by top-1 score, correct (positive, hit at rank 1) at ranks 1 and 6, over 4 positives
     assert report.micro_ap == pytest.approx((1 / 1 + 2 / 6) / 4)
+
+
+def test_micro_ap_ranks_ties_against_the_model():
+    # Equal top-1 scores: the wrong answer ranks first, so labeling order cannot raise the score
+    report = EvalReport.from_rows([row("positive", 0.5, hit_rank=1), row("negative", 0.5)])
+
+    assert report.micro_ap == 0.5
 
 
 def test_mini_gallery_holds_every_target_cover_plus_seeded_distractors(tmp_path, catalog):
@@ -173,5 +182,6 @@ def test_dry_run_on_a_temp_set(tmp_path, reload_config, capsys):
 
     out = capsys.readouterr().out
     assert "2 eval photos: 1 positive, 1 negative, 0 unknown" in out
+    assert "0 positives no longer in the catalog" in out
     assert "gallery: 1 target covers + 5 distractors" in out
     assert "config hash:" in out

@@ -34,7 +34,10 @@ class EvalItem:
 
 
 def load_eval_set(set_dir: Path, catalog: Catalog, clusters: dict[str, int] | None) -> list[EvalItem]:
-    """Eval-split labels with their hit targets. A positive whose release is not in the catalog is skipped with a warning.
+    """Eval-split labels with their hit targets.
+
+    A positive whose release is no longer in the catalog stays in, with no targets: the app could
+    not find it either, so it counts as a miss rather than leaving the denominator.
 
     Targets are the labeled release, every release of the same album (Catalog.same_album), and,
     once duplicate clusters exist, every release in the same cluster as any of those.
@@ -53,7 +56,8 @@ def load_eval_set(set_dir: Path, catalog: Catalog, clusters: dict[str, int] | No
         try:
             targets = set(catalog.same_album(label.mbid))
         except KeyError:
-            print(f"Skipped {label.file}: release {label.mbid} is not in the catalog", file=sys.stderr)
+            print(f"Warning: {label.file}'s release {label.mbid} is not in the catalog; scored as a miss", file=sys.stderr)
+            items.append(EvalItem(label, set()))
             continue
         if clusters:
             targets |= {m for t in list(targets) if t in clusters for m in members[clusters[t]]}
@@ -136,9 +140,13 @@ class EvalReport:
                 per_tag[tag] = (recall(tagged, 1), len(tagged))
         hits_at_1 = [_top1(r) for r in positives if r["hit_rank"] == 1]
 
+        def is_correct(r: Row) -> bool:
+            return r["kind"] == "positive" and r["hit_rank"] == 1
+
         precisions, correct = [], 0
-        for rank, r in enumerate(sorted(rows, key=_top1, reverse=True), start=1):
-            if r["kind"] == "positive" and r["hit_rank"] == 1:
+        # Highest score first; among equal scores the wrong answers go first, so ties never help
+        for rank, r in enumerate(sorted(rows, key=lambda r: (-_top1(r), is_correct(r))), start=1):
+            if is_correct(r):
                 correct += 1
                 precisions.append(correct / rank)
         micro_ap = sum(precisions) / len(positives) if positives else 0.0
@@ -207,9 +215,10 @@ def _card(row: Row) -> str:
     parts = [
         f'<figure class="photo"><img src="{e(Path(row["file"]).as_uri())}" alt="">'
         f'<figcaption>{e(Path(row["file"]).name)}<br>{e(tags)}</figcaption></figure>',
-        f'<figure><img src="{_thumb(row["mbid"] or "")}" alt="" loading="lazy">'
-        f'<figcaption>expected<br>{e(row["expected"])}</figcaption></figure>',
     ]
+    if row["mbid"]:
+        parts.append(f'<figure><img src="{_thumb(row["mbid"])}" alt="" loading="lazy">'
+                     f'<figcaption>expected<br>{e(row["expected"])}</figcaption></figure>')
     for rank, m in enumerate(row["matches"], start=1):
         hit = ' class="hit"' if rank == row["hit_rank"] else ""
         parts.append(
@@ -265,37 +274,38 @@ class EvalSet:
     catalog: Catalog
     items: list[EvalItem]
     gallery: list[Cover]
-    skipped: int  # eval positives left out because their release is not in the catalog
+    missing: int  # eval positives whose release left the catalog, scored as misses
 
     @classmethod
     def prepare(cls, set_name: str, distractors: int, seed: int) -> "EvalSet":
         set_dir = set_dir_for(set_name)
         catalog = Catalog()
         items = load_eval_set(set_dir, catalog, clusters=None)  # duplicate clusters join once Task 5 builds them
-        positives = sum(label.kind == "positive" and label.split == "eval" for label in load_labels(set_dir))
-        skipped = positives - sum(item.label.kind == "positive" for item in items)
-        return cls(set_dir, catalog, items, build_mini_gallery(items, catalog, distractors, seed), skipped)
+        missing = sum(item.label.kind == "positive" and not item.targets for item in items)
+        return cls(set_dir, catalog, items, build_mini_gallery(items, catalog, distractors, seed), missing)
 
     def describe(self) -> str:
         kinds = {k: sum(item.label.kind == k for item in self.items) for k in KINDS}
         targets = set().union(*(item.targets for item in self.items))
         n_targets = sum(c.mbid in targets for c in self.gallery)
         return (f"{len(self.items)} eval photos: {kinds['positive']} positive, {kinds['negative']} negative, "
-                f"{kinds['unknown']} unknown; {self.skipped} positives skipped, release not in the catalog\n"
+                f"{kinds['unknown']} unknown; {self.missing} positives no longer in the catalog, scored as misses\n"
                 f"gallery: {n_targets} target covers + {len(self.gallery) - n_targets} distractors")
 
 
 def _git_sha() -> str:
     repo = config.REPO_ROOT
     sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
-    dirty = subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    # Earlier eval output under docs/results is not a code change
+    dirty = subprocess.run(["git", "status", "--porcelain", "--", ".", ":!docs/results"],
+                           cwd=repo, capture_output=True, text=True).stdout.strip()
     return sha + ("-dirty" if dirty else "")
 
 
 def run_eval(model: str, set_name: str, distractors: int, views: int, px: int | None, seed: int, work_dir: Path) -> EvalReport:
     """Embed the mini gallery (cached in work_dir), identify every eval photo, write the report.
 
-    Writes docs/results/<date>-eval-<model>-<set>/ with report.md, report.json (git SHA, config
+    Writes docs/results/<date>-eval-<model>-<set>-<config hash>/ with report.md, report.json (git SHA, config
     hash, gallery hash, command, every row) and misses.html.
     """
     from pipeline.retrieval.build_index import build_index
@@ -313,17 +323,23 @@ def run_eval(model: str, set_name: str, distractors: int, views: int, px: int | 
     if not (index_dir / "index.hnsw").exists():
         root = config.require_image_root()
         index_dir.mkdir(parents=True, exist_ok=True)
+        (index_dir / "errors.log").unlink(missing_ok=True)  # a retried embed logs its errors afresh
         stems, embs = embed_images([root / c.file for c in gallery], embedder, batch=64, workers=6,
                                    errors_log=index_dir / "errors.log")
         # A drive that went away turns every remaining cover into an error; never cache that gallery
         config.require_image_root()
         shard = index_dir / "gallery.npz"
         # Extra fronts are <mbid>-<cover_id>.jpg, so the first 36 characters of a stem are the mbid
-        np.savez(shard, uuids=np.array([s[:36] for s in stems], dtype="U36"), embs=embs.astype(np.float16))
+        np.savez(shard, uuids=np.array([s[:36] for s in stems], dtype="U36"), embs=embs.astype(np.float16),
+                 stems=np.array(stems))
         build_index([shard], embedder.dim, index_dir, M=32, ef_construction=200)
     identifier = Identifier(embedder, index_dir, catalog)
-    if len(identifier.labels) < len(gallery):
-        print(f"Warning: {len(gallery) - len(identifier.labels)} gallery covers could not be read; "
+    # Hash the covers that were embedded, not the planned list: a gallery missing unreadable
+    # covers gets its own hash, and a complete one matches the --dry-run hash
+    embedded = set(np.load(index_dir / "gallery.npz")["stems"].tolist())
+    embedded_gallery = [c for c in gallery if Path(c.file).stem in embedded]
+    if len(embedded_gallery) < len(gallery):
+        print(f"Warning: {len(gallery) - len(embedded_gallery)} gallery covers could not be read; "
               f"see {index_dir / 'errors.log'}", file=sys.stderr)
 
     rows: list[Row] = []
@@ -343,11 +359,12 @@ def run_eval(model: str, set_name: str, distractors: int, views: int, px: int | 
     command = shlex.join(["python", "-m", "pipeline.retrieval.eval", "--model", model, "--set", set_name,
                           "--distractors", str(distractors), "--views", str(views), "--seed", str(seed),
                           *(["--px", str(px)] if px else [])])
-    provenance = {"command": command, "git_sha": _git_sha(), "config_hash": config_hash(es.set_dir, distractors, views, px, seed),
-                  "gallery_hash": gallery_hash(gallery), "gallery_size": len(gallery),
-                  "gallery_embedded": len(identifier.labels), "positives_skipped": es.skipped}
-    name = f"{date.today().isoformat()}-eval-{model}-{set_name}" + (f"-{px}px" if px else "") + ("-1view" if views == 1 else "")
-    out = config.RESULTS_DIR / name
+    cfg_hash = config_hash(es.set_dir, distractors, views, px, seed)
+    provenance = {"command": command, "git_sha": _git_sha(), "config_hash": cfg_hash,
+                  "gallery_hash": gallery_hash(embedded_gallery), "gallery_size": len(gallery),
+                  "gallery_embedded": len(embedded_gallery), "positives_missing": es.missing}
+    # The config hash keeps a same-day run with other settings from overwriting this one
+    out = config.RESULTS_DIR / f"{date.today().isoformat()}-eval-{model}-{set_name}-{cfg_hash}"
     out.mkdir(parents=True, exist_ok=True)
     header = "\n".join([f"# Eval: {model} on {set_name}", "", f"`{command}`", "",
                         *(f"- {k}: {v}" for k, v in provenance.items() if k != "command"), "",

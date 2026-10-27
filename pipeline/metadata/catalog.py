@@ -120,10 +120,11 @@ class Catalog:
         A key with an empty half ("+" and "÷" both normalize to an empty title, an unresolved
         artist to an empty name) joins nothing, matching how identify groups its results.
         """
-        title, artist = self.album_key(mbid).split("|", 1)
+        key = self.album_key(mbid)
+        title, artist = key.split("|", 1)
         if not (title and artist):
             return [mbid]
-        return [m for (m,) in self._db.execute("SELECT mbid FROM releases WHERE album_key = ?", (f"{title}|{artist}",))]
+        return [m for (m,) in self._db.execute("SELECT mbid FROM releases WHERE album_key = ?", (key,))]
 
     def cover_count(self) -> int:
         return self._db.execute("SELECT COUNT(*) FROM covers").fetchone()[0]
