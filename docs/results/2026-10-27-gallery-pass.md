@@ -1,6 +1,6 @@
 # Gallery pass: 256 px shards and perceptual hashes
 
-Plan Task 5, issue #19, decision D10. Prefix 00 ran at `3322bdc`, the full run at `d29b0fe`; the recipe (`short256-q90-lanczos-phash8`) is the same in both, so prefix 00 counts as done. Commands ran from the repo root with
+Plan Task 5, issue #19, decision D10. The prefix 00 numbers below come from `712c296`; the full run runs at `3b6a4a2`, whose recipe adds Pillow's version (`short256-q90-lanczos-phash8-pillow11.3.0`), so it redid prefix 00: same 15,375 covers, 0 skipped, 172 s. Commands ran from the repo root with
 `pipeline/.venv`, the Seagate drive mounted over USB, and the catalog built from
 `covers-2026-10-24.jsonl` (3,977,195 covers).
 
@@ -33,12 +33,14 @@ At 23 KB per cover the shards come to about 92 GB; the internal disk had 232 GB 
 
 ## Full run
 
-Started 2026-10-27 12:18 EDT, detached:
+A first attempt started at 12:18 and was stopped after prefix 04 (0 skipped in 77,567 covers) to
+take the PR review's fixes, which change the recipe. The run restarted 2026-10-27 12:34 EDT, detached:
 
 ```
 nohup caffeinate -i pipeline/.venv/bin/python -u -m pipeline.gallery.shard_and_hash --all \
   > ~/Projects/record-scan-data/gallery256/run-all.log 2>&1 &
 ```
 
-Prefix 01 took 175 s (89 covers/s) and put the rest at about 12.3 h. Totals land here when it
+In the first attempt, prefixes 01 to 04 took 175 to 188 s each (82 to 89 covers/s), about 12.5 h
+for the rest. Totals land here when it
 ends, followed by the duplicate clusters (#20).
