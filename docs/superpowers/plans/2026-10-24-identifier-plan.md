@@ -30,13 +30,7 @@
 
 ## Review focus
 
-1. Two labels for one image: the labeler appends a new line and the loader keeps the latest line per `sha1`; a re-label never silently keeps the old answer. Test in Task 2.
-2. Split drift: the Python and TypeScript `split_for(sha1, group)` return the same answer for the same input; the same five literal sha1 values and the same three published FNV-1a vectors are asserted in both suites. Tests in Tasks 2 and 3.
-3. Catalog search misses on accents and case: "bjork" finds Björk and "the beatles" finds "Beatles, The"; FTS5 is built with `unicode61 remove_diacritics 2`. Test in Task 1.
-4. A corrupt JPEG or an unmounted drive mid-run: the gallery pass logs and skips the file, finishes the prefix, and resumes per prefix on rerun; it never creates folders under `/Volumes`. Test in Task 5.
-5. Lost or clobbered covers in a catalog update: the cover fetcher never overwrites or deletes a file on the drive, keeps an old cover while it is still upstream, backs off on 503, and resumes from its lookup log after a crash without repeating a request. Test in Task 6.
-6. Metric gaming: a model task that changes the hit rule, the split, seeds or test assertions so that a number improves without the model improving. Reviewers check for it in every task from Task 4 on; the eval-integrity constraint forbids it in the same commit.
-7. Stale derived artifacts: anything cached or marked done (shards, `.done` markers, indexes, eval gallery caches, resume logs) is keyed by everything that produced it, so changing the producer (preprocessing, weights, input size, the cover list) makes the old artifact rebuild or get refused. Reviewers check every diff that changes a producer for a cache that would still be reused. PRs #43 and #45 each shipped a miss of this kind.
+The list moved to `REVIEW.md` at the repo root, with the same numbers, so every review reads it. Items 1 to 7 there are the ones this plan cites as "Review focus N".
 
 ---
 
