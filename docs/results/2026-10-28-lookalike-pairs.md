@@ -1,6 +1,6 @@
 # Templates, lookalike pairs and dedup groups from the pHash
 
-Issue #68, replacing the chained clusters from #20. Code at `068ad07`, run 2026-10-28 on the 256
+Issue #68, replacing the chained clusters from #20. Code at `f529319`, run 2026-10-28 on the 256
 `covers.npy` files from `2026-10-27-gallery-pass.md` and the catalog built from
 `covers-2026-10-24.jsonl`. No drive.
 
@@ -24,8 +24,9 @@ and two covers share an artist when those sets meet.
   each release's own covers, template covers left out.
 
 N is 6. The recipe sidecar beside each output reads
-`template2-5release-groups dedup2 lookalike6 catalog-c506a85dfac1bcee gallery-adc597dcc38e303f`:
-the catalog fingerprint hashes every release's mbid, artist ids and release group, and the gallery
+`series-designs-v1 template2-5release-groups dedup2 lookalike6 catalog-c506a85dfac1bcee gallery-adc597dcc38e303f`.
+`series-designs-v1` is `GROUP_RULE`, which names the logic and changes whenever `group()` would
+write different outputs for the same numbers. The catalog fingerprint hashes every release's mbid, artist ids and release group, and the gallery
 part hashes every prefix's done marker. The loaders refuse any other recipe. They read the whole
 catalog to check it, 11 to 14 s.
 
@@ -35,7 +36,7 @@ catalog to check it, 11 to 14 s.
 |---|---|
 | covers | 3,977,195 |
 | releases | 3,962,307 |
-| time | 122 s, 8.8 GB peak memory |
+| time | 115 s, 8.8 GB peak memory |
 | templates | 5,240 designs, 71,635 covers of 71,572 releases |
 | lookalike pairs | 838,710 |
 | dedup groups | 3,626,204 |
