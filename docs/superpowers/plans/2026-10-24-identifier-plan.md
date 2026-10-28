@@ -223,8 +223,8 @@ def query_views(img: Image.Image) -> list[Image.Image]            # [center squa
 
 # embed.py   CLI: python -m pipeline.retrieval.embed --model NAME (--prefixes 00 01 | --all | --uuids FILE) [--source drive|shards] [--batch 64] [--workers 6] [--px 224]
 def embed_images(paths: list[Path], embedder: Embedder, batch: int, workers: int, errors_log: Path) -> tuple[list[str], np.ndarray]   # keyed by file stem (mbid); unreadable files logged to errors_log and skipped
-def embed_prefix(prefix: str, embedder: Embedder, out_dir: Path, batch: int, workers: int) -> int        # writes out_dir/<prefix>.npz once (uuids U36, embs float16, signature), <prefix>.errors.log and <prefix>.done holding the signature; source param added with shards (Task 5)
-def pending_prefixes(out_dir: Path, signature: str) -> list[str]  # prefixes not done by this signature; source param added with shards (Task 5)
+def embed_prefix(prefix: str, files: list[str], embedder: Embedder, out_dir: Path, batch: int, workers: int) -> int        # files from Catalog.cover_files(prefix); writes out_dir/<prefix>.npz once (uuids U36, embs float16, signature), <prefix>.errors.log and <prefix>.done holding the signature and cover_list_digest(files); source param added with shards (Task 5)
+def is_done(prefix: str, files: list[str], out_dir: Path, signature: str) -> bool  # done by this signature from this cover list; source param added with shards (Task 5)
 
 # build_index.py   CLI: python -m pipeline.retrieval.build_index --model NAME [--M 32] [--ef-construction 200]
 def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construction: int) -> int   # verifies dims and one shared signature; writes index.hnsw + labels.npy (U36) + signature.txt
