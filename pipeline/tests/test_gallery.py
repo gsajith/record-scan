@@ -268,9 +268,23 @@ def test_the_cli_writes_clusters_that_load_back_and_prints_a_size_histogram(gall
     cluster_duplicates.main()
 
     written = tmp_path / "gallery" / "clusters.npy"
-    assert load_clusters(written) == cluster(gallery, max_distance=8)
+    assert load_clusters(written, max_distance=8) == cluster(gallery, max_distance=8)
     rows = np.load(written)
     assert dict(zip(rows["mbid"], rows["cluster_size"].tolist())) == {SQUARE: 3, TWIN: 3, COPY: 3, WIDE: 1, SMALL: 1, OTHER: 1}
     out = capsys.readouterr().out
     assert "7 covers of 6 releases in 3 prefixes: 4 clusters" in out
     assert "1 release: 3 clusters" in out and "3 releases: 1 cluster" in out
+
+
+def test_loading_clusters_refuses_ones_made_with_another_distance_or_gallery(gallery, tmp_path, reload_config, monkeypatch):
+    reload_config(RS_DATA_DIR=tmp_path)
+    monkeypatch.setattr(sys, "argv", ["cluster_duplicates"])
+    cluster_duplicates.main()
+    written = tmp_path / "gallery" / "clusters.npy"
+
+    with pytest.raises(ValueError, match="stale"):
+        load_clusters(written, max_distance=4)
+    done = tmp_path / "gallery" / "01.done"
+    done.write_text(done.read_text() + "0")  # a catalog update redid prefix 01 with another cover list
+    with pytest.raises(ValueError, match="stale"):
+        load_clusters(written, max_distance=8)

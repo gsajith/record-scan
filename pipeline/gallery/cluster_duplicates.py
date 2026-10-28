@@ -7,7 +7,8 @@ covers when their pHashes match exactly or differ in at most --max-distance bits
 releases: a release's extra fronts are separate covers, and the release joins every cluster its
 covers fall in. Joins are transitive, so A near B near C puts all three in one cluster. Writes
 config.GALLERY_DIR/clusters.npy, one row per release (mbid, cluster_id, cluster_size in releases),
-and prints the release count, the cluster count and a histogram of cluster sizes.
+with clusters.recipe beside it (the distance and the gallery it came from), and prints the release
+count, the cluster count and a histogram of cluster sizes.
 
 At distance 8 the joins chain through low-detail covers into one cluster of 14% of the catalog
 (docs/results/2026-10-27-gallery-pass.md), so identify and eval don't read these clusters yet.
@@ -17,6 +18,7 @@ prefixes aren't done, since their hashes can't be compared.
 """
 
 import argparse
+import hashlib
 import itertools
 import os
 import sys
@@ -115,8 +117,19 @@ def _check_recipes(covers_files: list[Path]) -> None:
         raise ValueError(f"Prefixes were hashed with different recipes, so their hashes can't be compared: {found}")
 
 
-def write_clusters(clusters: dict[str, int], path: Path) -> None:
-    """clusters.npy, one row per release sorted by mbid, with its cluster's size in releases."""
+def clusters_recipe(covers_files: list[Path], max_distance: int) -> str:
+    """What a clusters file was made from: the distance and every prefix's done marker, which holds
+    its hash recipe and cover list. A catalog update or a new distance makes old clusters stale."""
+    markers = "\n".join(f"{f.name}: {(f.parent / f.name.replace('.covers.npy', '.done')).read_text()}"
+                         for f in sorted(covers_files))
+    return f"hamming{max_distance} {hashlib.sha1(markers.encode()).hexdigest()[:16]}"
+
+
+def write_clusters(clusters: dict[str, int], path: Path, recipe: str) -> None:
+    """clusters.npy, one row per release sorted by mbid, with its cluster's size in releases, and
+    beside it clusters.recipe."""
+    recipe_path = path.with_suffix(".recipe")
+    recipe_path.unlink(missing_ok=True)  # a write that fails partway must not look current
     mbids = np.array(sorted(clusters), dtype="U36")
     ids = np.array([clusters[m] for m in mbids.tolist()], dtype=np.uint32)
     rows = np.empty(len(mbids), dtype=CLUSTERS_DTYPE)
@@ -125,10 +138,16 @@ def write_clusters(clusters: dict[str, int], path: Path) -> None:
     with tmp.open("wb") as f:  # a file handle stops numpy from appending another .npy
         np.save(f, rows)
     os.replace(tmp, path)
+    recipe_path.write_text(recipe)
 
 
-def load_clusters(path: Path) -> dict[str, int]:
-    """{mbid: cluster_id}, as cluster() returned it, for identify and eval."""
+def load_clusters(path: Path, max_distance: int) -> dict[str, int]:
+    """{mbid: cluster_id}, as cluster() returned it, for identify and eval. Refuses clusters made
+    with another distance or from a gallery that has changed since (see clusters_recipe)."""
+    recipe_path = path.with_suffix(".recipe")
+    expected = clusters_recipe(sorted(path.parent.glob("*.covers.npy")), max_distance)
+    if not recipe_path.exists() or recipe_path.read_text() != expected:
+        raise ValueError(f"{path} is stale or not at distance {max_distance}; rerun cluster_duplicates")
     rows = np.load(path)
     return dict(zip(rows["mbid"].tolist(), rows["cluster_id"].tolist()))
 
@@ -157,7 +176,7 @@ def main() -> None:
         sys.exit(f"No covers.npy files in {out_dir}; run shard_and_hash first")
     start = time.monotonic()
     clusters = cluster(covers_files, args.max_distance)
-    write_clusters(clusters, out_dir / "clusters.npy")
+    write_clusters(clusters, out_dir / "clusters.npy", clusters_recipe(covers_files, args.max_distance))
     n_covers = sum(len(np.load(f, mmap_mode="r")) for f in covers_files)
     print(f"{n_covers:,} covers of {len(clusters):,} releases in {len(covers_files)} prefixes: "
           f"{len(set(clusters.values())):,} clusters at Hamming distance <= {args.max_distance} "

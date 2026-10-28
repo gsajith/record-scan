@@ -128,7 +128,8 @@ At distance 0 the largest groups are placeholders: hash `0x8000000000000000` (1,
 images) and `0x0` (542). The exclusion list (#56) takes those out.
 
 So these clusters must not reach `identify` or `eval`: a hit on any of 568,997 releases would count
-as right. Choosing a rule that doesn't chain is a follow-up for Gautham.
+as right. Choosing a rule that doesn't chain is #68, for Gautham. This run's `clusters.npy` predates
+`clusters.recipe`, so `load_clusters` refuses it.
 
 ## Earlier attempts
 
