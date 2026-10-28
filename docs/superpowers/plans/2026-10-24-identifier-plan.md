@@ -308,7 +308,7 @@ Progress: #19 landed `shard_and_hash.py` and `Catalog.cover_files`, with tests f
 - A `.done` marker reads `original-<HASH_RECIPE> <hash of the cover list>`. Done-ness keys on the copy and the cover list only, so a catalog update redoes every prefix whose list changed but a library upgrade doesn't re-read the drive. `HASH_RECIPE` names the Pillow, scipy and numpy versions the hash uses; change it when `phash()` changes. Readers of `covers.npy` (#20) refuse prefixes with different hash recipes; recomputing hashes from the local shards is the fix, built if a mismatch ever happens.
 - The hash and sizes describe the stored pixels and ignore EXIF orientation, as `embed.py` and the eval do; prefix 00 has no rotated covers. Covers are converted to RGB before hashing, which matches `imagehash.phash` for RGB and gray images (all of prefix 00).
 - Each cover is read, then decoded, so the two failures differ: a file that won't decode is corrupt and skipped for good, a missing file is skipped too, and any other read error leaves the prefix pending for the next run. If the drive drops, the run stops. A leftover `<prefix>.tar.tmp` is overwritten on the next run.
-- Numbers in `docs/results/2026-10-27-gallery-pass.md`.
+- The full copy finished 2026-10-28 00:18 EDT: 3,977,195 covers, 0 skipped, 282 GB, 11 h 17 min. Numbers in `docs/results/2026-10-27-gallery-pass.md`.
 - In prefix 00, about 2% of covers have a short side under 256 px: small originals (243) and strips or banners with a 500 px long side (51). #56 (after #20, before #22) builds an exclusion list for non-covers (placeholders, blanks, strips) from the recorded sizes and contact sheets Gautham reviews; the drive and shards stay untouched.
 
 ### Task 6: new covers since the dump (D11, done)
