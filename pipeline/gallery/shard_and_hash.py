@@ -74,7 +74,8 @@ def read_and_hash(path: Path) -> tuple[bytes, int, int, int] | OSError | Corrupt
         return CorruptCover(f"{type(e).__name__}: {e}")
 
 
-def _list_digest(files: list[str]) -> str:
+def cover_list_digest(files: list[str]) -> str:
+    """A short hash of a prefix's cover list, in any order. Done markers here and in embed.py hold it."""
     return hashlib.sha1("\n".join(sorted(files)).encode()).hexdigest()[:16]
 
 
@@ -85,7 +86,7 @@ def is_done(prefix: str, files: list[str], out_dir: Path) -> bool:
     if not (done.exists() and all(p.exists() for p in outputs)):
         return False
     recipe, _, digest = done.read_text().partition(" ")
-    return recipe.startswith("original-") and digest == _list_digest(files)
+    return recipe.startswith("original-") and digest == cover_list_digest(files)
 
 
 def hash_recipe(prefix: str, out_dir: Path) -> str:
@@ -129,7 +130,7 @@ def process_prefix(prefix: str, files: list[str], out_dir: Path, workers: int) -
     os.replace(shard_tmp, out_dir / f"{prefix}.tar")
     os.replace(rows_tmp, out_dir / f"{prefix}.covers.npy")
     if not retry:
-        (out_dir / f"{prefix}.done").write_text(f"original-{HASH_RECIPE} {_list_digest(files)}")
+        (out_dir / f"{prefix}.done").write_text(f"original-{HASH_RECIPE} {cover_list_digest(files)}")
     return len(rows), len(files) - len(rows)
 
 
