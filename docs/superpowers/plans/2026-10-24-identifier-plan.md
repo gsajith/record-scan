@@ -89,7 +89,7 @@ record-scan/
       shard_and_hash.py            drive -> gallery shards of the originals + phash, sizes (Task 5)
       cluster_duplicates.py        covers.npy phashes -> clusters.parquet
     retrieval/
-      embedders.py                 7 backbones behind one Protocol, query_views()
+      embedders.py                 7 backbones (8 after Task 7) behind one Protocol, query_views()
       embed.py                     shards or uuid lists -> npz
       build_index.py, identify.py  hnsw index, album-level identify
       eval.py                      gold/wild eval with lenient hits, slices, negatives
@@ -363,8 +363,18 @@ Needs H1, H2 frames labeled through the labeler (at least the smoke-run size: 40
 
 The sweep and the crop study read original covers at every input size, from `GALLERY_DIR` or the drive, never from a resized copy, so the 448 px runs measure the model instead of the copy. Each results file reports which model wins at which size, since Task 10 sizes the upload by it.
 
+The sweep has an eighth embedder, `google/embeddinggemma-2`, added 2026-10-27 from `docs/research/reports/Tiny embedding models 2026.md`. Its image embeddings read printed text, which the DINO models are not trained to do, so the `text-only` slice is where it could beat them. It runs as `embeddinggemma-2-t70`, a teacher candidate only: at 440M parameters and 49 to 70 ms per image on 2026 phones it is never exported. The name carries the 70-token image budget into the signature and the results folder, so `eval.py` stays untouched. `HfEmbedder` cannot run it, because its image vector comes from the text model mean-pooling the soft tokens behind a prompt. It gets its own class and a `load_embedder` branch, loading only the text and vision encoders. These requirements hold, each asserted by a fast test on the loaded model and processor:
+
+- Every setting that changes its vectors reaches `embedder_signature`: the pinned Hugging Face commit, the dtype, the token budget, the prompt and the pooling. Gallery and query use the same prompt.
+- float32, set explicitly. The checkpoint is bfloat16 and transformers loads that by default, and Google warns float16 returns NaN or degraded embeddings.
+- The 70-token budget is set on the processor at load, not per call. A square cover resizes to 384 px, so `input_px=384`, and a 500 px cover is never upscaled. The 280-token default would resize it up to 768 px, so the sweep skips it.
+- Mean pooling is reimplemented, not taken from sentence-transformers, which would touch the dependency files.
+
+The sweep's gate stays as written. If it wins the `text-only` slice but misses the shortlist, bring that to Gautham at the Task 7 checkpoint with the number of records behind it, and leave the gate alone. If it loses on every slice, drop it.
+
 **Files:**
 - Create: `pipeline/retrieval/sweep.py`, `pipeline/retrieval/crop_study.py`, `docs/results/<date>-frozen-sweep.md`, `docs/results/<date>-crop-study.md`
+- Modify: `pipeline/retrieval/embedders.py` (the `embeddinggemma-2` embedder), `pipeline/tests/test_embedders.py`
 
 **Interfaces (produces):**
 ```python
@@ -422,7 +432,7 @@ Each later task is written at full detail only once the measurements it depends 
 - **Task 14, Step 8: teacher fine-tune, SSCD-style** (rented GPU). Gate: beats Task 13 by >= 3 points, no slice loses more than 3.
 - **Task 15, Step 9: student distillation** against precomputed teacher targets. Ship the smallest student within 2 points and under 30 ms p95.
 - **Task 16, Step 10: index compression study** (faiss IVF-PQ64, PQ32, OPQ, binary + rescore). Gate: PQ64 within 2 points of exact search ships on-device as an asset pack; otherwise stay hybrid.
-- **Task 17, Step 11: lock calibration and app integration.** 99% lock precision for both D14 modes: a held-up record locks fast; while flipping, the app plays only once the same front record agrees over several frames, stays quiet between records, and switches when the front record changes. Three agreeing frames with scores fused across frames (a crate shot gets several partial views as the phone moves, and the fused score beats any single frame), OCR fallback for low-margin and crate results (the visible top of a sleeve usually carries the artist and title), ship bar per the report.
+- **Task 17, Step 11: lock calibration and app integration.** 99% lock precision for both D14 modes: a held-up record locks fast; while flipping, the app plays only once the same front record agrees over several frames, stays quiet between records, and switches when the front record changes. Three agreeing frames with scores fused across frames (a crate shot gets several partial views as the phone moves, and the fused score beats any single frame), OCR fallback for low-margin and crate results (the visible top of a sleeve usually carries the artist and title), ship bar per the report. The OCR text searches an FTS5 trigram table over title, artist names and aliases, built from `normalize()` output like `release_fts`, which absorbs dropped letters and cut-off words. It backs up the unicode61 table rather than replacing it, since trigram matching needs 3 or more characters. No text embedding model (see `docs/research/reports/Tiny embedding models 2026.md`).
 - **Catalog update job:** Task 6 rerun on a newer dump plus catalog rebuild plus incremental embedding of the new `covers-<date>.jsonl` entries with the shipped teacher.
 
 ---
