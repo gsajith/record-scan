@@ -35,7 +35,7 @@ Images are the weak spot for this project. Image input and `box` sit behind a `T
 
 ## Where it would sit in this repo
 
-The only live model call is `web/src/app/api/openai/image_detection/route.ts`. It sends the photo to `gpt-5-mini` and asks for `album_name` and `artist_name` as strings, which `web/src/app/page.tsx` then searches on Deezer. Jev cannot return an album name it was not given, so it cannot replace this route. The plan already keeps that route only as the fallback behind the retrieval service (Task 10 in `docs/superpowers/plans/2026-10-24-identifier-plan.md`).
+The only live model call is `web/src/app/api/openai/image_detection/route.ts`. It sends the photo to `gpt-5-mini` and asks for an `album_name` string and an `artist_name` list of strings, which `web/src/app/page.tsx` then searches on Deezer. Jev cannot return an album name it was not given, so it cannot replace this route. The plan already keeps that route only as the fallback behind the retrieval service (Task 10 in `docs/superpowers/plans/2026-10-24-identifier-plan.md`).
 
 The plan's core does not call a hosted model at all. It embeds frames with a local backbone and searches an HNSW index (`pipeline/retrieval/embed.py`, `build_index.py`, `identify.py`), heading for an on-device student held to a 30 ms p95 bar (D13). D14's crate-flipping case needs the app to find the front record in real time and stay quiet between records. A 70 to 500 ms network call per frame misses both.
 
@@ -43,7 +43,7 @@ Three Jev features look relevant on paper. None earns a place now:
 
 - `box` to find the cover in a crate frame. Task 7's crop study already tests OpenCV contour rectify and Apple's `VNDetectRectanglesRequest`, both local and free. Jev's `box` is the experimental one.
 - `noul` for "is there a record in this frame". The gold set's 100 to 200 negative frames (H2) are there to calibrate a retrieval score threshold for exactly this, with no extra service.
-- `choice` over the top five retrieval candidates, with their cover thumbnails as images in the criteria. This is the one idea with some merit: a second opinion when two pressings look alike. It still needs the experimental image flag. The gallery working copy is 256 px on the short side (D10), below Jev's 280 px floor, so thumbnails would need upscaling or fetching at full size.
+- `choice` over the top five retrieval candidates, with their cover thumbnails as images in the criteria. This is the one idea with some merit: a second opinion when two pressings look alike. It still needs the experimental image flag. Most gallery covers are 500 px originals (D10), above Jev's 280 px floor, but the smaller originals would need upscaling.
 
 The pipeline's metadata tools (`pipeline/metadata/`) match and diff MusicBrainz dumps with deterministic code and SQLite FTS5. Nothing there needs a probabilistic classifier.
 
