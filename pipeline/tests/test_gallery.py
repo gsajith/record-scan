@@ -1,3 +1,4 @@
+import itertools
 import shutil
 import tarfile
 
@@ -193,3 +194,57 @@ def test_cluster_groups_identical_and_near_duplicate_covers_but_not_unrelated_on
     assert set(clusters) == {SQUARE, WIDE, SMALL, COPY, OTHER, TWIN}  # releases, not files: EXTRA is SQUARE's
     assert clusters[SQUARE] == clusters[TWIN] == clusters[COPY]
     assert len({clusters[m] for m in (SQUARE, WIDE, SMALL, OTHER)}) == 4
+
+
+def write_covers(out, prefix, rows, recipe=shard_and_hash.HASH_RECIPE):
+    """A covers.npy and a done marker, as process_prefix leaves them, from (key, phash) rows."""
+    out.mkdir(parents=True, exist_ok=True)
+    covers = np.array([(key, phash, 500, 500) for key, phash in rows], dtype=shard_and_hash.COVERS_DTYPE)
+    np.save(out / f"{prefix}.covers.npy", covers)
+    (out / f"{prefix}.done").write_text(f"original-{recipe} 0123456789abcdef")
+    return out / f"{prefix}.covers.npy"
+
+
+def mbid(i):
+    return f"{i:08x}-0000-4000-8000-000000000000"
+
+
+def test_cluster_joins_hashes_up_to_max_distance_bits_apart_and_no_further(tmp_path):
+    base = 0x0123_4567_89AB_CDEF
+    eight = base ^ 0x8000_0400_0020_0101  # 8 bits flipped, spread over the 64
+    rows = [(mbid(0), base), (mbid(1), eight), (mbid(2), base ^ 0xFF00_0000_0000_0000),  # 8 adjacent bits
+            (mbid(3), base ^ 0x1FF), (mbid(4), ~base & (2**64 - 1))]  # 9 bits, and every bit
+    clusters = cluster([write_covers(tmp_path, "00", rows)], max_distance=8)
+
+    assert clusters[mbid(0)] == clusters[mbid(1)] == clusters[mbid(2)]
+    assert len({clusters[mbid(i)] for i in (0, 3, 4)}) == 3
+    assert len(set(cluster([tmp_path / "00.covers.npy"], max_distance=0).values())) == 5
+
+
+def test_cluster_finds_the_same_clusters_as_comparing_every_pair(tmp_path):
+    rng = np.random.default_rng(0)
+    hashes = []
+    for _ in range(150):  # each base hash with a few variants up to 12 bits away, some chaining
+        h = int(rng.integers(0, 2**63)) * 2 + int(rng.integers(0, 2))
+        hashes.append(h)
+        for _ in range(int(rng.integers(0, 4))):
+            for bit in rng.choice(64, size=int(rng.integers(1, 13)), replace=False):
+                h ^= 1 << int(bit)
+            hashes.append(h)
+    rows = [(mbid(i), h) for i, h in enumerate(hashes)]
+    clusters = cluster([write_covers(tmp_path, "00", rows)], max_distance=8)
+
+    expected = list(range(len(hashes)))  # union-find over every pair
+
+    def root(i):
+        while expected[i] != i:
+            i = expected[i]
+        return i
+
+    for i, j in itertools.combinations(range(len(hashes)), 2):
+        if (hashes[i] ^ hashes[j]).bit_count() <= 8:
+            expected[root(i)] = root(j)
+    same = {(i, j): root(i) == root(j) for i, j in itertools.combinations(range(len(hashes)), 2)}
+    chained = [p for p, joined in same.items() if joined and (hashes[p[0]] ^ hashes[p[1]]).bit_count() > 8]
+    assert sum(same.values()) > 100 and chained  # real clusters to find, some joined only through others
+    assert same == {(i, j): clusters[mbid(i)] == clusters[mbid(j)] for i, j in same}
