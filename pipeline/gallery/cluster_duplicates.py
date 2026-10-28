@@ -9,6 +9,9 @@ covers fall in. Joins are transitive, so A near B near C puts all three in one c
 config.GALLERY_DIR/clusters.npy, one row per release (mbid, cluster_id, cluster_size in releases),
 and prints the release count, the cluster count and a histogram of cluster sizes.
 
+At distance 8 the joins chain through low-detail covers into one cluster of 14% of the catalog
+(docs/results/2026-10-27-gallery-pass.md), so identify and eval don't read these clusters yet.
+
 Needs no drive. Refuses a gallery whose prefixes were hashed with different recipes, or whose
 prefixes aren't done, since their hashes can't be compared.
 """
