@@ -30,6 +30,9 @@ from pipeline.gallery.shard_and_hash import hash_recipe
 CLUSTERS_DTYPE = np.dtype([("mbid", "U36"), ("cluster_id", np.uint32), ("cluster_size", np.uint32)])
 # The near-duplicate search needs this many of its blocks to match exactly (see near_pairs)
 MATCHING_BLOCKS = 4
+SIZE_BUCKETS = [("1 release", 1, 1), ("2 releases", 2, 2), ("3 releases", 3, 3), ("4 releases", 4, 4),
+                ("5 to 9 releases", 5, 9), ("10 to 99 releases", 10, 99), ("100 to 999 releases", 100, 999),
+                ("1,000 or more releases", 1000, sys.maxsize)]
 
 
 def cluster(covers_files: list[Path], max_distance: int) -> dict[str, int]:
@@ -107,3 +110,58 @@ def _check_recipes(covers_files: list[Path]) -> None:
     if len(by_recipe) > 1:
         found = "; ".join(f"{recipe}: {' '.join(prefixes)}" for recipe, prefixes in by_recipe.items())
         raise ValueError(f"Prefixes were hashed with different recipes, so their hashes can't be compared: {found}")
+
+
+def write_clusters(clusters: dict[str, int], path: Path) -> None:
+    """clusters.npy, one row per release sorted by mbid, with its cluster's size in releases."""
+    mbids = np.array(sorted(clusters), dtype="U36")
+    ids = np.array([clusters[m] for m in mbids.tolist()], dtype=np.uint32)
+    rows = np.empty(len(mbids), dtype=CLUSTERS_DTYPE)
+    rows["mbid"], rows["cluster_id"], rows["cluster_size"] = mbids, ids, np.bincount(ids)[ids]
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("wb") as f:  # a file handle stops numpy from appending another .npy
+        np.save(f, rows)
+    os.replace(tmp, path)
+
+
+def load_clusters(path: Path) -> dict[str, int]:
+    """{mbid: cluster_id}, as cluster() returned it, for identify and eval."""
+    rows = np.load(path)
+    return dict(zip(rows["mbid"].tolist(), rows["cluster_id"].tolist()))
+
+
+def size_histogram(clusters: dict[str, int]) -> list[str]:
+    """Lines counting clusters, and the releases in them, by cluster size in releases."""
+    sizes = np.bincount(np.fromiter(clusters.values(), dtype=np.int64, count=len(clusters)))
+    lines = []
+    for label, low, high in SIZE_BUCKETS:
+        in_bucket = sizes[(sizes >= low) & (sizes <= high)]
+        if len(in_bucket):
+            n = len(in_bucket)
+            lines.append(f"  {label}: {n:,} cluster{'s' * (n != 1)}, {int(in_bucket.sum()):,} releases")
+    lines.append(f"  largest: {', '.join(f'{s:,}' for s in np.sort(sizes)[::-1][:5])}")
+    return lines
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--max-distance", type=int, default=8, help="most pHash bits two lookalikes differ in")
+    args = parser.parse_args()
+
+    out_dir = config.GALLERY_DIR
+    covers_files = sorted(out_dir.glob("*.covers.npy"))
+    if not covers_files:
+        sys.exit(f"No covers.npy files in {out_dir}; run shard_and_hash first")
+    start = time.monotonic()
+    clusters = cluster(covers_files, args.max_distance)
+    write_clusters(clusters, out_dir / "clusters.npy")
+    n_covers = sum(len(np.load(f, mmap_mode="r")) for f in covers_files)
+    print(f"{n_covers:,} covers of {len(clusters):,} releases in {len(covers_files)} prefixes: "
+          f"{len(set(clusters.values())):,} clusters at Hamming distance <= {args.max_distance} "
+          f"({time.monotonic() - start:.0f} s), written to {out_dir / 'clusters.npy'}")
+    print("Cluster sizes:")
+    print("\n".join(size_histogram(clusters)))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,5 +1,6 @@
 import itertools
 import shutil
+import sys
 import tarfile
 
 import numpy as np
@@ -7,8 +8,8 @@ import pytest
 from PIL import Image
 
 from pipeline import config
-from pipeline.gallery import shard_and_hash
-from pipeline.gallery.cluster_duplicates import cluster
+from pipeline.gallery import cluster_duplicates, shard_and_hash
+from pipeline.gallery.cluster_duplicates import cluster, load_clusters
 from pipeline.gallery.shard_and_hash import is_done, process_prefix
 
 SQUARE = "00000000-0000-4000-8000-000000000001"
@@ -248,3 +249,28 @@ def test_cluster_finds_the_same_clusters_as_comparing_every_pair(tmp_path):
     chained = [p for p, joined in same.items() if joined and (hashes[p[0]] ^ hashes[p[1]]).bit_count() > 8]
     assert sum(same.values()) > 100 and chained  # real clusters to find, some joined only through others
     assert same == {(i, j): clusters[mbid(i)] == clusters[mbid(j)] for i, j in same}
+
+
+def test_cluster_refuses_prefixes_hashed_with_different_recipes_or_not_done(tmp_path):
+    files = [write_covers(tmp_path, "00", [(mbid(0), 1)]),
+             write_covers(tmp_path, "01", [(mbid(1), 1)], recipe="phash8-pillow11.3.0-scipy1.18.1-numpy0.0.0")]
+    with pytest.raises(ValueError, match="different recipes.*numpy0.0.0: 01"):
+        cluster(files, max_distance=8)
+
+    (tmp_path / "01.done").unlink()  # a prefix left pending after read errors has a partial covers.npy
+    with pytest.raises(ValueError, match="01 isn't done"):
+        cluster(files, max_distance=8)
+
+
+def test_the_cli_writes_clusters_that_load_back_and_prints_a_size_histogram(gallery, tmp_path, reload_config, monkeypatch, capsys):
+    reload_config(RS_DATA_DIR=tmp_path)  # GALLERY_DIR is where the gallery fixture wrote
+    monkeypatch.setattr(sys, "argv", ["cluster_duplicates"])
+    cluster_duplicates.main()
+
+    written = tmp_path / "gallery" / "clusters.npy"
+    assert load_clusters(written) == cluster(gallery, max_distance=8)
+    rows = np.load(written)
+    assert dict(zip(rows["mbid"], rows["cluster_size"].tolist())) == {SQUARE: 3, TWIN: 3, COPY: 3, WIDE: 1, SMALL: 1, OTHER: 1}
+    out = capsys.readouterr().out
+    assert "7 covers of 6 releases in 3 prefixes: 4 clusters" in out
+    assert "1 release: 3 clusters" in out and "3 releases: 1 cluster" in out
