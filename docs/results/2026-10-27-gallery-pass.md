@@ -39,9 +39,29 @@ nohup caffeinate -i pipeline/.venv/bin/python -u -m pipeline.gallery.shard_and_h
   > ~/Projects/record-scan-data/gallery/run-all.log 2>&1 &
 ```
 
-Started 2026-10-27 13:01 EDT. After prefix 00 the run put the rest at about 8.7 h. At 1,084 MB
-per prefix the shards come to about 278 GB, against 346 GB free when it started. Totals land
-here when it ends, followed by the duplicate clusters (#20).
+Started 2026-10-27 13:01 EDT and ended 2026-10-28 00:18 EDT, 11 h 17 min in all. The rate held near
+100 covers/s through the middle prefixes and rose to 110 covers/s for the last ones.
+
+| | Value |
+|---|---|
+| covers written | 3,977,195, every cover in the catalog, of which 866,557 are extra fronts |
+| skipped | 0; no errors logs, no prefix left pending |
+| prefixes done | 256 of 256, all with recipe `original-phash8-pillow11.3.0-scipy1.18.1-numpy2.2.6` |
+| shards | 281.9 GB |
+| `covers.npy` files | 1.1 GB |
+| distinct pHashes | 3,683,556, so about 294,000 covers share an exact hash with another |
+| internal disk free after the run | 77 GB |
+
+Sizes from all 256 `covers.npy` files:
+
+| | Covers |
+|---|---|
+| 500 x 500 | 2,635,850 |
+| long side under 500 px (smaller originals) | 327,645 |
+| short side under 256 px | 77,668 |
+| aspect ratio over 2:1 | 6,400 |
+
+The duplicate clusters (#20) come next and need only `GALLERY_DIR`, not the drive.
 
 ## Earlier attempts
 
