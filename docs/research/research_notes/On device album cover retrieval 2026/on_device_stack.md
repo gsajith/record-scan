@@ -7,11 +7,13 @@ Convention in these notes: a link after a claim is its source. "Vendor claim" me
 ## 1. Inference runtimes: per-frame latency for ViT-S/16 or ViT-B/16 at 224 px
 
 ### Takeaway
-A ViT-B/16-class image encoder at 224 px runs in roughly 10 to 21 ms per frame on a 2024 to 2026 flagship NPU (Qualcomm AI Hub measured figures) and about 10 ms on an iPhone 12 Pro Max for Apple's ViT-B/16-sized MobileCLIP-B (Apple's own figure). Embedding is not the bottleneck for 5 to 10 fps; first-load compilation on the Neural Engine and mid-range Android devices are the real risks.
+A ViT-B/16-class image encoder at 224 px runs in roughly 4 to 7 ms per frame on a 2024 to 2026 flagship NPU (Qualcomm AI Hub measured figures; corrected 2026-10-27, see below) and about 10 ms on an iPhone 12 Pro Max for Apple's ViT-B/16-sized MobileCLIP-B (Apple's own figure). Embedding is not the bottleneck for 5 to 10 fps; first-load compilation on the Neural Engine and mid-range Android devices are the real risks.
 
 ### Cited findings
 
 Android, measured (Qualcomm AI Hub, OpenAI CLIP ViT-B/16, 224x224, NPU). The page reports a single "OpenAI-Clip" latency per device and does not say whether it covers the image encoder alone or image plus text. [Qualcomm AI Hub, qualcomm/OpenAI-Clip](https://huggingface.co/qualcomm/OpenAI-Clip)
+
+Correction, 2026-10-27: the model behind this table is 150M params (571 MB) with a 77-token text context, so it includes the text tower. Image-only ViT-B/16 on the same chips runs in 3.6 to 6.8 ms (TFLite fp16, 8 Elite Gen 5 to 8 Gen 3) and 14.2 ms (w8a16) on the Snapdragon 7 Gen 4. [qualcomm/VIT](https://huggingface.co/qualcomm/VIT); details in [the Android latency note](../../2026-10-27-android-latency.md)
 
 | Chipset (phone) | TFLite float | QNN DLC float | QNN DLC w8a16 | ONNX float | ONNX w8a16 | Peak memory (MB) |
 |---|---|---|---|---|---|---|
@@ -40,7 +42,7 @@ Export paths:
 - Qualcomm AI Hub ships the same ViT-B/16 CLIP as TFLite, QNN DLC and ONNX assets with float and w8a16 variants, which is a ready export path for Android. [Qualcomm AI Hub, qualcomm/OpenAI-Clip](https://huggingface.co/qualcomm/OpenAI-Clip)
 
 ### Inferences
-- At 5 to 10 fps the frame budget is 100 to 200 ms. A ViT-B/16 at 10 to 21 ms on 2024+ flagships, or 37 to 41 ms on a Snapdragon 7 Gen 4, leaves headroom. Embedding every frame is affordable on flagships; on mid-range phones, embed only when the crop is stable.
+- At 5 to 10 fps the frame budget is 100 to 200 ms. A ViT-B/16 image encoder at 4 to 7 ms on 2024+ flagship NPUs, or about 14 ms on a Snapdragon 7 Gen 4, leaves headroom. Embedding every frame is affordable on flagships; on mid-range phones, embed only when the crop is stable.
 - MobileCLIP-S2 (3.6 ms on a 2020 iPhone) or a distilled ViT-S/16 student is the obvious choice if the retrieval eval shows it matches ViT-B/16 on covers. That also cuts memory and thermals.
 - The iPhone 18 Pro first-load regression means the app should compile the model once at install or first launch and cache it, and should not assume load time is seconds.
 - A single ExecuTorch export with Core ML and QNN/XNNPACK backends is the least-effort cross-platform path. Core ML via coremltools on iOS plus Qualcomm AI Hub TFLite/QNN on Android is the best-measured path.
