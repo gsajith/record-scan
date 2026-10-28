@@ -121,6 +121,16 @@ def test_build_index_rejects_wrong_dim(tmp_path):
         build_index([tmp_path / "00.npz"], 4, tmp_path, M=16, ef_construction=100)
 
 
+def test_build_index_skips_a_shard_with_no_covers(tmp_path):
+    # hnswlib fails on zero rows only when they come first, so the empty prefix sorts first
+    np.savez(tmp_path / "00.npz", uuids=np.zeros(0, dtype="U36"), embs=np.zeros((0, 4), np.float16),
+             signature=FixedEmbedder.signature)  # a prefix the catalog has no covers for
+    np.savez(tmp_path / "01.npz", uuids=np.array([ABBEY], dtype="U36"), embs=np.array([E0], dtype=np.float16),
+             signature=FixedEmbedder.signature)
+
+    assert build_index(sorted(tmp_path.glob("*.npz")), 4, tmp_path, M=16, ef_construction=100) == 1
+
+
 def test_identify_widens_search_when_one_group_fills_the_neighbours(catalog, tmp_path):
     # 25 lookalikes of one cover outrank Debut, more than the first k*10 = 20 neighbours hold
     lookalikes = [f"{i:08x}-0000-4000-8000-000000000000" for i in range(25)]

@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from pipeline.retrieval.build_index import stale_shards
 from pipeline.retrieval.embed import embed_prefix, is_done
 
 RED = "00000000-0000-4000-8000-000000000001"
@@ -86,6 +87,20 @@ def test_embed_prefix_redoes_a_prefix_whose_cover_list_grew(tmp_path, reload_con
     assert embed_prefix("00", files, embedder, out, batch=1, workers=1) == 2
     assert set(np.load(out / "00.npz")["uuids"]) == {RED, BLUE}
     assert is_done("00", files, out, embedder.signature)
+
+
+def test_stale_shards_names_prefixes_behind_the_catalog(tmp_path, reload_config):
+    root = tmp_path / "images"
+    (root / "00").mkdir(parents=True)
+    Image.new("RGB", (40, 40), (255, 0, 0)).save(root / "00" / f"{RED}.jpg")
+    reload_config(RS_IMAGE_ROOT=root)
+    out = tmp_path / "emb"
+    covers = {"00": [f"00/{RED}.jpg"]}
+    embed_prefix("00", covers["00"], MeanColorEmbedder(), out, batch=1, workers=1)
+    assert stale_shards([out / "00.npz"], covers.__getitem__) == []
+
+    covers["00"].append(f"00/{BLUE}.jpg")  # a catalog update the embed run hasn't caught up with
+    assert stale_shards([out / "00.npz"], covers.__getitem__) == ["00"]
 
 
 def test_embed_prefix_refuses_to_finish_when_the_drive_drops(tmp_path, reload_config):

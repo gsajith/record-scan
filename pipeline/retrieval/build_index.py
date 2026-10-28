@@ -5,17 +5,21 @@
 Reads config.EMB_DIR/<model>/<prefix>.npz and writes index.hnsw, labels.npy (row id ->
 mbid, U36) and signature.txt beside them. Every shard must carry the same embedder
 signature (see embedders.embedder_signature); shards from before signatures need
-re-embedding.
+re-embedding. It refuses to run while any shard is behind its .done marker or the catalog's
+current cover list for that prefix: run embed --all first.
 """
 
 import argparse
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import hnswlib
 import numpy as np
 
 from pipeline import config
+from pipeline.metadata.catalog import Catalog
+from pipeline.retrieval.embed import is_done
 
 SHARD_GLOB = "[0-9a-f][0-9a-f].npz"  # skips the .tmp.npz an interrupted embed run leaves
 
@@ -34,7 +38,10 @@ def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construc
             uuids, embs = data["uuids"].astype("U36"), data["embs"]
         if embs.ndim != 2 or embs.shape[1] != dim or len(uuids) != len(embs):
             raise SystemExit(f"{shard} holds {embs.shape} vectors for {len(uuids)} ids, expected dim {dim}")
-        parts.append((uuids, embs))
+        if len(uuids):  # a prefix with no covers; hnswlib fails on zero rows when they come first
+            parts.append((uuids, embs))
+    if not parts:
+        raise SystemExit(f"The shards in {out_dir} hold no vectors")
     if len(signatures) > 1:
         raise SystemExit(f"Shards in {out_dir} come from different embedders, by preprocessing, weights or library ({', '.join(sorted(signatures))}). "
                          "Re-embed the old ones.")
@@ -59,6 +66,17 @@ def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construc
     return len(labels)
 
 
+def stale_shards(shards: list[Path], cover_files: Callable[[str], list[str]]) -> list[str]:
+    """Prefixes whose shard isn't done, by its own embedder, from the cover list cover_files gives now."""
+    stale = []
+    for shard in shards:
+        with np.load(shard) as data:
+            signature = str(data["signature"]) if "signature" in data else ""
+        if not is_done(shard.stem, cover_files(shard.stem), shard.parent, signature):
+            stale.append(shard.stem)
+    return stale
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", required=True, help="shard folder name under the embeddings dir")
@@ -68,6 +86,9 @@ def main() -> None:
 
     emb_dir = config.EMB_DIR / args.model
     shards = sorted(emb_dir.glob(SHARD_GLOB))
+    if stale := stale_shards(shards, Catalog().cover_files):
+        raise SystemExit(f"Shards {' '.join(stale)} in {emb_dir} are behind the catalog or unfinished. "
+                         f"Run embed --model {args.model} --all first.")
     dim = np.load(shards[0])["embs"].shape[1] if shards else 0
     n = build_index(shards, dim, emb_dir, args.M, args.ef_construction)
     print(f"Indexed {n:,} vectors ({dim}-d) from {len(shards)} shards into {emb_dir / 'index.hnsw'}")
