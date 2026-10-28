@@ -120,6 +120,7 @@ def _check_recipes(covers_files: list[Path]) -> None:
 def clusters_recipe(covers_files: list[Path], max_distance: int) -> str:
     """What a clusters file was made from: the distance and every prefix's done marker, which holds
     its hash recipe and cover list. A catalog update or a new distance makes old clusters stale."""
+    _check_recipes(covers_files)
     markers = "\n".join(f"{f.name}: {(f.parent / f.name.replace('.covers.npy', '.done')).read_text()}"
                          for f in sorted(covers_files))
     return f"hamming{max_distance} {hashlib.sha1(markers.encode()).hexdigest()[:16]}"
@@ -175,8 +176,10 @@ def main() -> None:
     if not covers_files:
         sys.exit(f"No covers.npy files in {out_dir}; run shard_and_hash first")
     start = time.monotonic()
+    # Taken before clustering, so a prefix redone during the run makes load_clusters refuse the result
+    recipe = clusters_recipe(covers_files, args.max_distance)
     clusters = cluster(covers_files, args.max_distance)
-    write_clusters(clusters, out_dir / "clusters.npy", clusters_recipe(covers_files, args.max_distance))
+    write_clusters(clusters, out_dir / "clusters.npy", recipe)
     n_covers = sum(len(np.load(f, mmap_mode="r")) for f in covers_files)
     print(f"{n_covers:,} covers of {len(clusters):,} releases in {len(covers_files)} prefixes: "
           f"{len(set(clusters.values())):,} clusters at Hamming distance <= {args.max_distance} "
