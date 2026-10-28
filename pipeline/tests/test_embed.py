@@ -4,12 +4,14 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from pipeline.retrieval.embed import embed_prefix, pending_prefixes
+from pipeline.retrieval.build_index import stale_shards
+from pipeline.retrieval.embed import embed_prefix, is_done
 
 RED = "00000000-0000-4000-8000-000000000001"
 GREEN = "00000000-0000-4000-8000-000000000002"
 CORRUPT = "00000000-0000-4000-8000-000000000003"
 OTHER = "01000000-0000-4000-8000-000000000004"
+BLUE = "00000000-0000-4000-8000-000000000005"
 
 
 class MeanColorEmbedder:
@@ -45,9 +47,10 @@ def test_embed_prefix_skips_corrupt_and_resumes(tmp_path, reload_config):
     out.mkdir()
     (out / "00.tmp.npz").write_bytes(b"left by a run that crashed mid-prefix")
     embedder = MeanColorEmbedder()
+    files = [f"00/{k}.jpg" for k in (RED, GREEN, CORRUPT)]
 
-    assert pending_prefixes(out, embedder.signature) == ["00", "01"]
-    assert embed_prefix("00", embedder, out, batch=1, workers=2) == 2
+    assert not is_done("00", files, out, embedder.signature)
+    assert embed_prefix("00", files, embedder, out, batch=1, workers=2) == 2
 
     shard = np.load(out / "00.npz")
     assert shard["uuids"].dtype == np.dtype("U36")
@@ -60,11 +63,44 @@ def test_embed_prefix_skips_corrupt_and_resumes(tmp_path, reload_config):
     assert CORRUPT in (out / "00.errors.log").read_text()
     assert not (out / "00.tmp.npz").exists()
 
-    # The finished prefix is skipped on rerun; only 01 is left
+    # The finished prefix is skipped on rerun, whatever order the list comes in; 01 is still pending
     calls = embedder.calls
-    assert pending_prefixes(out, embedder.signature) == ["01"]
-    assert embed_prefix("00", embedder, out, batch=1, workers=2) == 0
+    assert is_done("00", files[::-1], out, embedder.signature)
+    assert not is_done("01", [f"01/{OTHER}.jpg"], out, embedder.signature)
+    assert embed_prefix("00", files, embedder, out, batch=1, workers=2) == 0
     assert embedder.calls == calls
+
+
+def test_embed_prefix_redoes_a_prefix_whose_cover_list_grew(tmp_path, reload_config):
+    root = tmp_path / "images"
+    (root / "00").mkdir(parents=True)
+    Image.new("RGB", (40, 40), (255, 0, 0)).save(root / "00" / f"{RED}.jpg")
+    reload_config(RS_IMAGE_ROOT=root)
+    out = tmp_path / "emb"
+    embedder = MeanColorEmbedder()
+    assert embed_prefix("00", [f"00/{RED}.jpg"], embedder, out, batch=1, workers=1) == 1
+
+    # A catalog update adds a cover to the done prefix
+    Image.new("RGB", (40, 40), (0, 0, 255)).save(root / "00" / f"{BLUE}.jpg")
+    files = [f"00/{RED}.jpg", f"00/{BLUE}.jpg"]
+    assert not is_done("00", files, out, embedder.signature)
+    assert embed_prefix("00", files, embedder, out, batch=1, workers=1) == 2
+    assert set(np.load(out / "00.npz")["uuids"]) == {RED, BLUE}
+    assert is_done("00", files, out, embedder.signature)
+
+
+def test_stale_shards_names_prefixes_behind_the_catalog(tmp_path, reload_config):
+    root = tmp_path / "images"
+    (root / "00").mkdir(parents=True)
+    Image.new("RGB", (40, 40), (255, 0, 0)).save(root / "00" / f"{RED}.jpg")
+    reload_config(RS_IMAGE_ROOT=root)
+    out = tmp_path / "emb"
+    covers = {"00": [f"00/{RED}.jpg"]}
+    embed_prefix("00", covers["00"], MeanColorEmbedder(), out, batch=1, workers=1)
+    assert stale_shards([out / "00.npz"], covers.__getitem__) == []
+
+    covers["00"].append(f"00/{BLUE}.jpg")  # a catalog update the embed run hasn't caught up with
+    assert stale_shards([out / "00.npz"], covers.__getitem__) == ["00"]
 
 
 def test_embed_prefix_refuses_to_finish_when_the_drive_drops(tmp_path, reload_config):
@@ -81,7 +117,7 @@ def test_embed_prefix_refuses_to_finish_when_the_drive_drops(tmp_path, reload_co
             return super().embed(images)
 
     with pytest.raises(SystemExit):
-        embed_prefix("00", UnmountingEmbedder(), out, batch=1, workers=1)
+        embed_prefix("00", [f"00/{RED}.jpg", f"00/{GREEN}.jpg"], UnmountingEmbedder(), out, batch=1, workers=1)
     assert not (out / "00.done").exists()
     assert not (out / "00.npz").exists()
 
@@ -92,10 +128,12 @@ def test_embed_prefix_redoes_a_prefix_done_by_another_embedder(tmp_path, reload_
     Image.new("RGB", (40, 40), (255, 0, 0)).save(root / "00" / f"{RED}.jpg")
     reload_config(RS_IMAGE_ROOT=root)
     out = tmp_path / "emb"
-    out.mkdir()
-    (out / "00.done").write_text("fake-8px-old")  # done before a preprocessing change
+    files = [f"00/{RED}.jpg"]
     embedder = MeanColorEmbedder()
+    assert embed_prefix("00", files, embedder, out, batch=1, workers=1) == 1
+    done = out / "00.done"
+    done.write_text(done.read_text().replace(embedder.signature, "fake-8px-old"))  # done before a preprocessing change
 
-    assert pending_prefixes(out, embedder.signature) == ["00"]
-    assert embed_prefix("00", embedder, out, batch=1, workers=1) == 1
-    assert (out / "00.done").read_text() == embedder.signature
+    assert not is_done("00", files, out, embedder.signature)
+    assert embed_prefix("00", files, embedder, out, batch=1, workers=1) == 1
+    assert is_done("00", files, out, embedder.signature)
