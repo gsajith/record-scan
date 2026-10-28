@@ -274,6 +274,13 @@ def test_the_cli_writes_groups_that_load_back_and_prints_their_counts(gallery, r
     assert "Clusters: 4 within 2 bits" in out and "1 release: 3 clusters" in out and "3 releases: 1 cluster" in out
 
 
+def test_loading_groups_refuses_ones_made_by_another_version_of_the_rule(ran, monkeypatch):
+    ran, _ = ran
+    monkeypatch.setattr(cluster_duplicates, "GROUP_RULE", cluster_duplicates.GROUP_RULE + "-changed")
+    with pytest.raises(ValueError, match="stale"):
+        load_clusters(ran / "clusters.npy", lookalike_distance=8)
+
+
 def test_loading_groups_refuses_ones_made_with_another_distance_gallery_or_catalog(ran):
     ran, _ = ran
     with pytest.raises(ValueError, match="stale"):

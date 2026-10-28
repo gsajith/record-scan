@@ -59,6 +59,9 @@ DEDUP_DISTANCE = 2
 # Same-artist hashes this close are lookalikes, a pair at a time. The largest distance with 45 of 50
 # hand-checked pairs the same picture, in docs/results/2026-10-28-lookalike-pairs.md.
 LOOKALIKE_DISTANCE = 6
+# Names group()'s logic in the recipe. Change it whenever group() would write different outputs
+# from the same input and numbers above, so old outputs are refused, as HASH_RECIPE does for hashes.
+GROUP_RULE = "series-designs-v1"
 # On compilations, so sharing it says nothing about two covers
 VARIOUS_ARTISTS = "89ad4ac3-39f7-470e-963a-56509c546377"
 # The near-duplicate search needs this many of its blocks to match exactly (see near_pairs)
@@ -324,13 +327,13 @@ def _catalog_rows(db_path: Path) -> Iterator[tuple[str, str, str | None]]:
 
 
 def groups_recipe(covers_files: list[Path], lookalike_distance: int, catalog: str) -> str:
-    """What the three outputs were made from: the rule's distances and cutoff, the catalog's
+    """What the three outputs were made from: the rule's version, distances and cutoff, the catalog's
     fingerprint and every prefix's done marker, which holds its hash recipe and cover list. A
     catalog update or a new rule makes old outputs stale."""
     _check_recipes(covers_files)
     markers = "\n".join(f"{f.name}: {(f.parent / f.name.replace('.covers.npy', '.done')).read_text()}"
                          for f in sorted(covers_files))
-    return (f"template{TEMPLATE_DISTANCE}-{TEMPLATE_RELEASE_GROUPS}release-groups dedup{DEDUP_DISTANCE} "
+    return (f"{GROUP_RULE} template{TEMPLATE_DISTANCE}-{TEMPLATE_RELEASE_GROUPS}release-groups dedup{DEDUP_DISTANCE} "
             f"lookalike{lookalike_distance} catalog-{catalog} gallery-{hashlib.sha1(markers.encode()).hexdigest()[:16]}")
 
 
