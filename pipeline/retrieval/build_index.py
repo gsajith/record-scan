@@ -6,7 +6,8 @@ Reads config.EMB_DIR/<model>/<prefix>.npz and writes index.hnsw, labels.npy (row
 mbid, U36) and signature.txt beside them. Every shard must carry the same embedder
 signature (see embedders.embedder_signature); shards from before signatures need
 re-embedding. It refuses to run while any shard is behind its .done marker or the catalog's
-current cover list for that prefix: run embed --all first.
+current cover list for that prefix: run embed --all first. Prefixes with covers but no shard
+yet are left out with a warning, so a few embedded prefixes still make a test index.
 """
 
 import argparse
@@ -18,6 +19,7 @@ import hnswlib
 import numpy as np
 
 from pipeline import config
+from pipeline.gallery.shard_and_hash import PREFIXES
 from pipeline.metadata.catalog import Catalog
 from pipeline.retrieval.embed import is_done
 
@@ -86,9 +88,13 @@ def main() -> None:
 
     emb_dir = config.EMB_DIR / args.model
     shards = sorted(emb_dir.glob(SHARD_GLOB))
-    if stale := stale_shards(shards, Catalog().cover_files):
+    catalog = Catalog()
+    if stale := stale_shards(shards, catalog.cover_files):
         raise SystemExit(f"Shards {' '.join(stale)} in {emb_dir} are behind the catalog or unfinished. "
                          f"Run embed --model {args.model} --all first.")
+    if missing := [p for p in PREFIXES if not (emb_dir / f"{p}.npz").exists() and catalog.cover_files(p)]:
+        print(f"Warning: {len(missing)} prefixes with covers have no shard yet, so the index is partial. "
+              f"Run embed --model {args.model} --all for the full catalog.")
     dim = np.load(shards[0])["embs"].shape[1] if shards else 0
     n = build_index(shards, dim, emb_dir, args.M, args.ef_construction)
     print(f"Indexed {n:,} vectors ({dim}-d) from {len(shards)} shards into {emb_dir / 'index.hnsw'}")
