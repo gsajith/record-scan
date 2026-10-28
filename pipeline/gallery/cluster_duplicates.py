@@ -84,9 +84,9 @@ def group(covers_files: list[Path], artists: Mapping[str, Iterable[str]], releas
     """Template groups, lookalike pairs and dedup clusters of the releases in the covers files.
 
     artists maps a release's mbid to its artist ids (a missing mbid has none), and release_groups
-    to its release group (a missing or None one stands alone). Each cover carries
-    the artists of every release that uses its pHash, Various Artists left out, and two covers
-    share an artist when those sets meet. Results are the same on every run over the same input.
+    to its release group (a missing or None one stands alone). Each cover carries the artists of
+    every release that uses its pHash, Various Artists left out, and two covers share an artist
+    when those sets meet. Results are the same on every run over the same input.
     """
     if lookalike_distance < DEDUP_DISTANCE:
         raise ValueError(f"lookalike_distance must be at least DEDUP_DISTANCE ({DEDUP_DISTANCE})")
