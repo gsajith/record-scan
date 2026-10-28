@@ -339,6 +339,17 @@ def test_a_two_bit_group_over_five_artists_is_a_template_and_leaves_the_lookalik
     assert len(set(clusters.values())) == 10
 
 
+
+def test_templates_count_first_credited_artists_so_one_well_credited_album_and_its_reissue_are_not_one(tmp_path):
+    rows = [(mbid(0), BASE), (mbid(1), flip(BASE, 5, 6))]  # an album and its reissue, 2 bits apart
+    artists = {mbid(0): ["composer", "conductor", "orchestra", "soprano", "tenor"],
+               mbid(1): ["composer", "conductor", "orchestra", "alto", "bass"]}
+
+    groups = group([write_covers(tmp_path, "00", rows)], artists, lookalike_distance=4)
+
+    assert len(groups.templates) == 0
+    assert pairs(groups) == {(mbid(0), mbid(1)): 2}
+
 def test_various_artists_alone_is_not_a_shared_artist(tmp_path):
     va = cluster_duplicates.VARIOUS_ARTISTS
     near = flip(BASE, 7, 8)
@@ -378,9 +389,14 @@ def test_group_finds_what_comparing_every_pair_of_covers_finds(tmp_path):
             hashes.append(h)
     va = cluster_duplicates.VARIOUS_ARTISTS
     release = [int(r) for r in rng.integers(0, len(hashes) * 3 // 4, size=len(hashes))]  # some have 2 covers
-    rows = [(f"{mbid(r)}-{i}", h) for i, (r, h) in enumerate(zip(release, hashes))]  # keys are file stems
     artists = {mbid(r): [str(a) for a in rng.choice([*"abcdefg", va], size=int(rng.integers(1, 3)), replace=False)]
                for r in set(release)}
+    design = int(rng.integers(0, 2**63))  # one design over six first artists; a leading VA is skipped
+    for n, credits in enumerate([["a"], ["b", "a"], [va, "c"], ["d"], ["x", "d"], ["e", "f"], ["a", "e"]]):
+        hashes.append(flip(design, *range(n % 3)))
+        release.append(1000 + n)
+        artists[mbid(1000 + n)] = credits
+    rows = [(f"{mbid(r)}-{i}", h) for i, (r, h) in enumerate(zip(release, hashes))]  # keys are file stems
 
     groups = group([write_covers(tmp_path, "00", rows)], artists, lookalike_distance=8)
 
@@ -394,9 +410,10 @@ def test_group_finds_what_comparing_every_pair_of_covers_finds(tmp_path):
         return (hashes[i] ^ hashes[j]).bit_count()
 
     designs = components(len(hashes), [(i, j) for i, j in itertools.combinations(covers, 2) if bits(i, j) <= 2])
-    spans = {}
+    spans = {}  # each design's distinct first credited artists
     for i in covers:
-        spans.setdefault(designs[i], set()).update(carried[i])
+        credited = [a for a in artists[mbid(release[i])] if a != va]
+        spans.setdefault(designs[i], set()).update(credited[:1])
     template = [len(spans[designs[i]]) >= 5 for i in covers]
     linked = [(i, j) for i, j in itertools.combinations(covers, 2)
               if not template[i] and not template[j] and carried[i] & carried[j]]

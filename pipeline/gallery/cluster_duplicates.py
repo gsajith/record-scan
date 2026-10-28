@@ -9,7 +9,7 @@ release using its hash, Various Artists left out. Writes three outputs to config
 
 - templates.npy: shared designs, such as label stock sleeves, series frames and near-blank covers.
   Connected components of hashes up to TEMPLATE_DISTANCE bits apart, with no artist check, whose
-  releases have TEMPLATE_ARTISTS or more artists. One row per cover: key, template_id, and the
+  releases have TEMPLATE_ARTISTS or more distinct first credited artists. One row per cover: key, template_id, and the
   group's release and artist counts.
 - lookalikes.npy: pairs of releases with covers up to N bits apart that share an artist, neither
   cover in a template. Pairs only: A near B and B near C don't pair A with C. One row per pair:
@@ -45,7 +45,8 @@ from pipeline.gallery.shard_and_hash import hash_recipe
 CLUSTERS_DTYPE = np.dtype([("mbid", "U36"), ("cluster_id", np.uint32), ("cluster_size", np.uint32)])
 LOOKALIKES_DTYPE = np.dtype([("mbid_a", "U36"), ("mbid_b", "U36"), ("distance", np.uint8)])
 TEMPLATES_DTYPE = np.dtype([("key", "U64"), ("template_id", np.uint32), ("releases", np.uint32), ("artists", np.uint32)])
-# Hashes this close are one design when their releases have this many artists between them
+# Hashes this close are one design when their releases have this many distinct first credited
+# artists, Various Artists left out
 TEMPLATE_DISTANCE = 2
 TEMPLATE_ARTISTS = 5
 # Same-artist hashes this close are one cover in the index
@@ -90,12 +91,19 @@ def group(covers_files: list[Path], artists: Mapping[str, Iterable[str]], lookal
     # Each distinct (hash, release) once, sorted by hash: the releases that use each hash
     hash_release = np.unique(hash_of_row.astype(np.int64) * n_releases + mbid_of_row)
     hr_hash, hr_release = hash_release // n_releases, hash_release % n_releases
-    hash_artists = _hash_artists(hr_hash, hr_release, mbids, artists)
+    release_ptr, release_ids, first_artist = _release_artists(mbids, artists)
+    hash_artists = _hash_artists(hr_hash, hr_release, release_ptr, release_ids, n_hashes)
 
     near_a, near_b = near_pairs(hashes, max(lookalike_distance, TEMPLATE_DISTANCE))
     distance = np.bitwise_count(hashes[near_a] ^ hashes[near_b]).astype(np.uint8)
-    template_of_hash, templates = _templates(near_a, near_b, distance, hash_of_row, mbid_of_row, hash_artists,
-                                             n_hashes, rows["key"])
+    template_of_hash, template_releases, template_artists = _templates(
+        near_a, near_b, distance, hr_hash, hr_release, first_artist, n_hashes)
+    in_template = np.flatnonzero(template_of_hash[hash_of_row] >= 0)
+    row_template = template_of_hash[hash_of_row[in_template]]
+    templates = np.empty(len(in_template), dtype=TEMPLATES_DTYPE)
+    templates["key"], templates["template_id"] = rows["key"][in_template], row_template
+    templates["releases"], templates["artists"] = template_releases[row_template], template_artists[row_template]
+    templates = templates[np.argsort(templates["key"], kind="stable")]
     # Template covers drop out of the other two outputs. A hash shares an artist with itself when
     # it has one, so the releases of one hash pair up.
     usable = (template_of_hash < 0) & (np.diff(hash_artists[0]) > 0)
@@ -122,55 +130,56 @@ def group(covers_files: list[Path], artists: Mapping[str, Iterable[str]], lookal
     return Groups(templates, lookalikes, dict(zip(mbids.tolist(), cluster_ids.tolist())))
 
 
-def _templates(near_a: np.ndarray, near_b: np.ndarray, distance: np.ndarray, hash_of_row: np.ndarray,
-               mbid_of_row: np.ndarray, hash_artists: tuple[np.ndarray, np.ndarray], n_hashes: int,
-               keys: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Each hash's template id, or -1, and TEMPLATES_DTYPE rows for the covers in templates.
+def _templates(near_a: np.ndarray, near_b: np.ndarray, distance: np.ndarray, hr_hash: np.ndarray,
+               hr_release: np.ndarray, first_artist: np.ndarray,
+               n_hashes: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Each hash's template id, or -1, and each template's release count and artist count.
 
     A template is a connected component of hashes up to TEMPLATE_DISTANCE apart, with no artist
-    check, whose releases have TEMPLATE_ARTISTS or more artists between them."""
+    check, whose releases have TEMPLATE_ARTISTS or more distinct first credited artists. Counting
+    first credits keeps one album credited to a composer, conductor, orchestra and soloists, and
+    its reissues, from looking like many artists' releases on one design."""
     close = distance <= TEMPLATE_DISTANCE
     graph = coo_matrix((np.ones(int(close.sum()), dtype=np.int8), (near_a[close], near_b[close])),
                        shape=(n_hashes, n_hashes))
     n_groups, group_of_hash = connected_components(graph, directed=False)
-    ptr, ids = hash_artists
-    n_artists = int(ids.max()) + 1 if len(ids) else 1
-    owner = np.repeat(group_of_hash, np.diff(ptr)).astype(np.int64)
-    artist_count = np.bincount(np.unique(owner * n_artists + ids) // n_artists, minlength=n_groups)
+    n_releases = len(first_artist)
+    group_release = np.unique(group_of_hash[hr_hash].astype(np.int64) * n_releases + hr_release)
+    gr_group, gr_release = group_release // n_releases, group_release % n_releases
+    release_count = np.bincount(gr_group, minlength=n_groups)
+    first = first_artist[gr_release]
+    credited = first >= 0
+    n_artists = int(first_artist.max()) + 1 if n_releases else 1
+    artist_count = np.bincount(np.unique(gr_group[credited] * n_artists + first[credited]) // n_artists,
+                               minlength=n_groups)
     is_template = artist_count >= TEMPLATE_ARTISTS
     template_id = np.full(n_groups, -1, dtype=np.int64)
     template_id[is_template] = np.arange(int(is_template.sum()))
-    template_of_hash = template_id[group_of_hash]
-
-    in_template = np.flatnonzero(template_of_hash[hash_of_row] >= 0)
-    row_template = template_of_hash[hash_of_row[in_template]]
-    n_releases = int(mbid_of_row.max()) + 1
-    release_count = np.bincount(np.unique(row_template * n_releases + mbid_of_row[in_template]) // n_releases,
-                                minlength=int(is_template.sum()))
-    out = np.empty(len(in_template), dtype=TEMPLATES_DTYPE)
-    out["key"], out["template_id"] = keys[in_template], row_template
-    out["releases"], out["artists"] = release_count[row_template], artist_count[is_template][row_template]
-    return template_of_hash, out[np.argsort(out["key"], kind="stable")]
+    return template_id[group_of_hash], release_count[is_template], artist_count[is_template]
 
 
-def _hash_artists(hr_hash: np.ndarray, hr_release: np.ndarray, mbids: np.ndarray,
-                  artists: Mapping[str, Iterable[str]]) -> tuple[np.ndarray, np.ndarray]:
-    """Each hash's artists as integers, Various Artists left out, in CSR form: hash h's artists are
-    ids[ptr[h]:ptr[h + 1]], sorted."""
+def _release_artists(mbids: np.ndarray, artists: Mapping[str, Iterable[str]]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Each release's artists as integers, Various Artists left out, in CSR form (release r's are
+    ids[ptr[r]:ptr[r + 1]]), and its first credited one, or -1 if it has none."""
     codes: dict[str, int] = {}
-    release_ptr, release_ids = [0], []
+    ptr, ids, first = [0], [], []
     for mbid in mbids.tolist():
-        ids = {codes.setdefault(a, len(codes)) for a in artists.get(mbid, ()) if a != VARIOUS_ARTISTS}
-        release_ids.extend(ids)
-        release_ptr.append(len(release_ids))
-    release_ptr = np.array(release_ptr, dtype=np.int64)
-    release_ids = np.array(release_ids, dtype=np.int64)
+        credited = [codes.setdefault(a, len(codes)) for a in artists.get(mbid, ()) if a != VARIOUS_ARTISTS]
+        first.append(credited[0] if credited else -1)
+        ids.extend(set(credited))
+        ptr.append(len(ids))
+    return np.array(ptr, dtype=np.int64), np.array(ids, dtype=np.int64), np.array(first, dtype=np.int64)
+
+
+def _hash_artists(hr_hash: np.ndarray, hr_release: np.ndarray, release_ptr: np.ndarray, release_ids: np.ndarray,
+                  n_hashes: int) -> tuple[np.ndarray, np.ndarray]:
+    """Each hash's artists, the union over the releases using it, in CSR form: hash h's artists
+    are ids[ptr[h]:ptr[h + 1]], sorted."""
     counts = np.diff(release_ptr)[hr_release]
     owner = np.repeat(hr_hash, counts)
     ids = release_ids[_ranges(release_ptr[hr_release], counts)]
-    n_artists = max(len(codes), 1)
+    n_artists = int(release_ids.max()) + 1 if len(release_ids) else 1
     pairs = np.unique(owner * n_artists + ids)
-    n_hashes = int(hr_hash.max()) + 1 if len(hr_hash) else 0
     ptr = np.concatenate([[0], np.cumsum(np.bincount(pairs // n_artists, minlength=n_hashes))])
     return ptr, pairs % n_artists
 
@@ -312,7 +321,7 @@ def groups_recipe(covers_files: list[Path], lookalike_distance: int, catalog: st
     _check_recipes(covers_files)
     markers = "\n".join(f"{f.name}: {(f.parent / f.name.replace('.covers.npy', '.done')).read_text()}"
                          for f in sorted(covers_files))
-    return (f"template{TEMPLATE_DISTANCE}-{TEMPLATE_ARTISTS}artists dedup{DEDUP_DISTANCE} "
+    return (f"template{TEMPLATE_DISTANCE}-{TEMPLATE_ARTISTS}first-artists dedup{DEDUP_DISTANCE} "
             f"lookalike{lookalike_distance} catalog-{catalog} gallery-{hashlib.sha1(markers.encode()).hexdigest()[:16]}")
 
 
