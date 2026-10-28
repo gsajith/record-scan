@@ -7,6 +7,7 @@ from PIL import Image
 
 from pipeline import config
 from pipeline.gallery import shard_and_hash
+from pipeline.gallery.cluster_duplicates import cluster
 from pipeline.gallery.shard_and_hash import is_done, process_prefix
 
 SQUARE = "00000000-0000-4000-8000-000000000001"
@@ -170,3 +171,25 @@ def test_a_library_upgrade_keeps_the_copy_done_and_records_the_hash_recipe(drive
     done.write_text(done.read_text().replace(shard_and_hash.HASH_RECIPE, "phash8-pillow11.3.0-scipy1.18.1-numpy0.0.0"))
     assert is_done("00", drive["00"], out)
     assert shard_and_hash.hash_recipe("00", out) == "phash8-pillow11.3.0-scipy1.18.1-numpy0.0.0"
+
+
+TWIN = "02000000-0000-4000-8000-000000000007"  # SQUARE's file, byte for byte, under another release
+
+
+@pytest.fixture
+def gallery(drive, tmp_path):
+    """The drive fixture sharded and hashed, plus TWIN in prefix 02. Returns the covers.npy paths."""
+    shutil.copy(config.IMAGE_ROOT / "00" / f"{SQUARE}.jpg", config.IMAGE_ROOT / "02" / f"{TWIN}.jpg")
+    drive["02"].append(f"02/{TWIN}.jpg")
+    out = tmp_path / "gallery"
+    for prefix in ("00", "01", "02"):
+        process_prefix(prefix, drive[prefix], out, workers=2)
+    return [out / f"{p}.covers.npy" for p in ("00", "01", "02")]
+
+
+def test_cluster_groups_identical_and_near_duplicate_covers_but_not_unrelated_ones(gallery):
+    clusters = cluster(gallery, max_distance=8)
+
+    assert set(clusters) == {SQUARE, WIDE, SMALL, COPY, OTHER, TWIN}  # releases, not files: EXTRA is SQUARE's
+    assert clusters[SQUARE] == clusters[TWIN] == clusters[COPY]
+    assert len({clusters[m] for m in (SQUARE, WIDE, SMALL, OTHER)}) == 4
