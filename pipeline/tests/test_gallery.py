@@ -327,16 +327,16 @@ def test_a_two_bit_group_over_five_release_groups_is_a_template_and_leaves_the_l
     chain = [BASE, flip(BASE, 1, 2), flip(BASE, 1, 2, 3, 4), flip(BASE, 1, 2, 3, 4, 5, 6), BASE]  # 2 bits a step
     rows = [(mbid(i), h) for i, h in enumerate(chain)]  # releases 0 to 4, one artist and release group each
     lookalike = flip(BASE, 10, 20, 30, 40)  # 4 bits from 0 and 4, more than 2 from every chain hash
-    rows += [(mbid(5), lookalike), (mbid(6), lookalike)]
+    rows += [(mbid(5), lookalike), (mbid(6), lookalike)]  # by another artist, so not part of the design
     other = ~BASE & (2**64 - 1)
     rows += [(mbid(7 + i), flip(other, *range(2 * i))) for i in range(4)]  # a chain over only 4 release groups
-    artists = {mbid(i): [a] for i, a in enumerate("abcde")}
-    artists |= {mbid(5): ["a"], mbid(6): ["a"], mbid(7): ["p"], mbid(8): ["q"], mbid(9): ["r"], mbid(10): ["s", "p"]}
+    artists = {mbid(i): [a] for i, a in enumerate("abcd")} | {mbid(4): ["e", "a"]}  # 4 would pair with 0
+    artists |= {mbid(5): ["z"], mbid(6): ["z"], mbid(7): ["p"], mbid(8): ["q"], mbid(9): ["r"], mbid(10): ["s", "p"]}
 
     groups = group([write_covers(tmp_path, "00", rows)], artists, {}, lookalike_distance=6)
 
     templates = {str(k): (int(t), int(r), int(g), int(a)) for k, t, r, g, a in groups.templates}
-    assert templates == {mbid(i): (0, 5, 5, 5) for i in range(5)}
+    assert templates == {mbid(i): (0, 5, 5, 5) for i in range(5)}  # 5 artists: a to e
     assert pairs(groups) == {(mbid(5), mbid(6)): 0, (mbid(7), mbid(10)): 6}
     clusters = groups.clusters
     assert len(clusters) == 11 and len({clusters[mbid(i)] for i in range(5)}) == 5  # template releases stand alone
@@ -358,6 +358,16 @@ def test_one_artists_series_on_one_design_is_a_template_but_one_albums_reissues_
     assert templates == {mbid(i): (0, 5, 5, 1) for i in range(5)}
     assert set(pairs(groups)) == {(mbid(10 + i), mbid(10 + j)) for i, j in itertools.combinations(range(6), 2)}
 
+
+
+def test_a_series_joins_over_same_artist_links_up_to_the_lookalike_distance(tmp_path):
+    series = [(mbid(i), flip(BASE, *range(4 * i))) for i in range(5)]  # each 4 bits from the next
+    artists = {mbid(i): ["dj"] for i in range(5)}
+    release_groups = {mbid(i): f"volume {i}" for i in range(5)}
+    covers = [write_covers(tmp_path, "00", series)]
+
+    assert len(group(covers, artists, release_groups, lookalike_distance=4).templates) == 5
+    assert len(group(covers, artists, release_groups, lookalike_distance=2).templates) == 0
 
 def test_various_artists_alone_is_not_a_shared_artist(tmp_path):
     va = cluster_duplicates.VARIOUS_ARTISTS
@@ -420,7 +430,8 @@ def test_group_finds_what_comparing_every_pair_of_covers_finds(tmp_path):
     def bits(i, j):
         return (hashes[i] ^ hashes[j]).bit_count()
 
-    designs = components(len(hashes), [(i, j) for i, j in itertools.combinations(covers, 2) if bits(i, j) <= 2])
+    designs = components(len(hashes), [(i, j) for i, j in itertools.combinations(covers, 2)
+                                        if bits(i, j) <= 2 or (bits(i, j) <= 8 and carried[i] & carried[j])])
     spans, credits = {}, {}  # each design's release groups (a release without one stands alone), and artists
     for i in covers:
         spans.setdefault(designs[i], set()).add(release_groups.get(mbid(release[i]), mbid(release[i])))

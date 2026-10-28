@@ -103,7 +103,11 @@ def group(covers_files: list[Path], artists: Mapping[str, Iterable[str]], releas
 
     near_a, near_b = near_pairs(hashes, max(lookalike_distance, TEMPLATE_DISTANCE))
     distance = np.bitwise_count(hashes[near_a] ^ hashes[near_b]).astype(np.uint8)
-    template_of_hash, template_counts = _templates(near_a, near_b, distance, hr_hash, hr_release, release_group,
+    shared = _share_an_artist(near_a, near_b, hash_artists)
+    # A design joins hashes within TEMPLATE_DISTANCE bits, and same-artist hashes within the
+    # lookalike distance, so one artist's series joins even where its covers sit further apart
+    design = (distance <= TEMPLATE_DISTANCE) | shared
+    template_of_hash, template_counts = _templates(near_a[design], near_b[design], hr_hash, hr_release, release_group,
                                                   hash_artists, n_hashes)
     in_template = np.flatnonzero(template_of_hash[hash_of_row] >= 0)
     row_template = template_of_hash[hash_of_row[in_template]]
@@ -116,13 +120,10 @@ def group(covers_files: list[Path], artists: Mapping[str, Iterable[str]], releas
     # it has one, so the releases of one hash pair up.
     usable = (template_of_hash < 0) & (np.diff(hash_artists[0]) > 0)
     same = np.flatnonzero(usable)
-    link_a = np.concatenate([near_a, same])
-    link_b = np.concatenate([near_b, same])
-    link_distance = np.concatenate([distance, np.zeros(len(same), np.uint8)])
-    keep = usable[link_a] & usable[link_b] & (link_distance <= lookalike_distance)
-    link_a, link_b, link_distance = link_a[keep], link_b[keep], link_distance[keep]
-    keep = _share_an_artist(link_a, link_b, hash_artists)
-    link_a, link_b, link_distance = link_a[keep], link_b[keep], link_distance[keep]
+    keep = usable[near_a] & usable[near_b] & shared & (distance <= lookalike_distance)
+    link_a = np.concatenate([near_a[keep], same])
+    link_b = np.concatenate([near_b[keep], same])
+    link_distance = np.concatenate([distance[keep], np.zeros(len(same), np.uint8)])
     lookalikes = _release_pairs(link_a, link_b, link_distance, hr_hash, hr_release, n_hashes, mbids)
 
     # Dedup clusters: nodes are the hashes, then the releases. Each usable hash links to its
@@ -138,17 +139,15 @@ def group(covers_files: list[Path], artists: Mapping[str, Iterable[str]], releas
     return Groups(templates, lookalikes, dict(zip(mbids.tolist(), cluster_ids.tolist())))
 
 
-def _templates(near_a: np.ndarray, near_b: np.ndarray, distance: np.ndarray, hr_hash: np.ndarray,
-               hr_release: np.ndarray, release_group: np.ndarray, hash_artists: tuple[np.ndarray, np.ndarray],
+def _templates(design_a: np.ndarray, design_b: np.ndarray, hr_hash: np.ndarray, hr_release: np.ndarray,
+               release_group: np.ndarray, hash_artists: tuple[np.ndarray, np.ndarray],
                n_hashes: int) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     """Each hash's template id, or -1, and each template's counts of releases, release groups and
     artists (Various Artists left out), keyed by their TEMPLATES_DTYPE fields.
 
-    A template is a connected component of hashes up to TEMPLATE_DISTANCE apart, with no artist
-    check, whose releases span TEMPLATE_RELEASE_GROUPS or more release groups."""
-    close = distance <= TEMPLATE_DISTANCE
-    graph = coo_matrix((np.ones(int(close.sum()), dtype=np.int8), (near_a[close], near_b[close])),
-                       shape=(n_hashes, n_hashes))
+    A template is a connected component of hashes over the design links (design_a[i], design_b[i])
+    whose releases span TEMPLATE_RELEASE_GROUPS or more release groups."""
+    graph = coo_matrix((np.ones(len(design_a), dtype=np.int8), (design_a, design_b)), shape=(n_hashes, n_hashes))
     n_groups, group_of_hash = connected_components(graph, directed=False)
     owner = group_of_hash[hr_hash].astype(np.int64)
     ptr, ids = hash_artists

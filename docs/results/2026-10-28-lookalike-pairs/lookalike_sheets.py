@@ -1,10 +1,13 @@
-"""Contact sheets of 50 random lookalike pairs at pHash distance 4, 6 and 8, then 2 and 0, for hand-checking N.
+"""Contact sheets of 50 random lookalike pairs at each pHash distance, for hand-checking N.
 
-    PYTHONPATH=. pipeline/.venv/bin/python docs/results/2026-10-28-lookalike-pairs/lookalike_sheets.py <out dir>
+    PYTHONPATH=. pipeline/.venv/bin/python docs/results/2026-10-28-lookalike-pairs/lookalike_sheets.py \
+        <out dir> pair|release <distance>...
 
-Run cluster_duplicates --lookalike-distance 8 first. Each sheet holds 25 numbered pairs, and each
-pair shows the two releases' closest covers. <out dir>/pairs-d<distance>.tsv lists the pairs in
-sheet order. The sheets are made of covers, so they stay out of git.
+Run cluster_duplicates --lookalike-distance 8 first. "pair" draws pairs uniformly, so a series of
+k releases weighs about k^2. "release" draws a release with a partner at that distance, then one of
+its partners, as an eval query meets pairs. Each sheet holds 25 numbered pairs, and each pair shows
+the two releases' closest covers. <out dir>/<weight>-d<distance>.tsv lists the pairs in sheet
+order. The sheets are made of covers, so they stay out of git.
 """
 import io
 import sys
@@ -15,7 +18,7 @@ from PIL import Image, ImageDraw
 
 from pipeline import config
 
-out = sys.argv[1]
+out, weight, distances = sys.argv[1], sys.argv[2], [int(d) for d in sys.argv[3:]]
 rows = np.concatenate([np.load(f) for f in sorted(config.GALLERY_DIR.glob("*.covers.npy"))])
 mbid_of_row = rows["key"].astype("U36")
 order = np.argsort(mbid_of_row, kind="stable")
@@ -46,8 +49,17 @@ def image(key, size=180):
 
 
 W = 180
-for d in (4, 6, 8, 2, 0):  # 2 and 0 added after 4, 6 and 8 all fell short, keeping their picks
-    pick = rng.choice(np.flatnonzero(pairs["distance"] == d), 50, replace=False)
+for d in distances:
+    at = np.flatnonzero(pairs["distance"] == d)
+    if weight == "pair":
+        pick = rng.choice(at, 50, replace=False)
+    else:  # each pair listed under both its releases; draw 50 distinct releases, then a partner each
+        sides = np.concatenate([pairs["mbid_a"][at], pairs["mbid_b"][at]])
+        rows_of = np.concatenate([at, at])
+        releases = np.unique(sides)
+        pick = []
+        for release in rng.choice(releases, 50, replace=False):
+            pick.append(rng.choice(rows_of[sides == release]))
     lines = []
     for sheet in range(2):
         canvas = Image.new("RGB", (5 * (2 * W + 16), 5 * (W + 22)), "white")
@@ -60,7 +72,7 @@ for d in (4, 6, 8, 2, 0):  # 2 and 0 added after 4, 6 and 8 all fell short, keep
             draw.text((x + 2, y + 4), f"{number}", fill="black")
             canvas.paste(image(a), (x, y + 20))
             canvas.paste(image(b), (x + W + 2, y + 20))
-        canvas.save(f"{out}/pairs-d{d}-{sheet + 1}.jpg", quality=85)
-    with open(f"{out}/pairs-d{d}.tsv", "w") as f:
+        canvas.save(f"{out}/{weight}-d{d}-{sheet + 1}.jpg", quality=85)
+    with open(f"{out}/{weight}-d{d}.tsv", "w") as f:
         f.write("pair\tmbid_a\tmbid_b\tcover_a\tcover_b\n" + "\n".join(lines) + "\n")
-    print(f"distance {d}: {int((pairs['distance'] == d).sum()):,} pairs, sheets written")
+    print(f"distance {d}: {len(at):,} pairs, sheets written")
