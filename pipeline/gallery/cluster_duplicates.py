@@ -7,11 +7,12 @@ artist ids and release groups from the catalog. A pHash records only coarse brig
 candidate, and an artist the two releases share decides. Each cover carries the artists of every
 release using its hash, Various Artists left out. Writes three outputs to config.GALLERY_DIR:
 
-- templates.npy: shared designs, such as label stock sleeves, series frames and near-blank covers.
-  Connected components of hashes up to TEMPLATE_DISTANCE bits apart, with no artist check, whose
-  releases span TEMPLATE_RELEASE_GROUPS or more release groups: the picture names a design, not a
-  release. One row per cover: key, template_id, and the group's release, release group and
-  artist counts.
+- templates.npy: shared designs, such as label stock sleeves, series frames, one artist's show
+  downloads or numbered volumes, and near-blank covers. A design joins hashes up to
+  TEMPLATE_DISTANCE bits apart, with no artist check, and same-artist hashes up to N bits apart;
+  a design whose releases span TEMPLATE_RELEASE_GROUPS or more release groups is a template,
+  since its picture names the design, not the release. One row per cover: key, template_id, and
+  the design's release, release group and artist counts.
 - lookalikes.npy: pairs of releases with covers up to N bits apart that share an artist, neither
   cover in a template. Pairs only: A near B and B near C don't pair A with C. One row per pair:
   mbid_a < mbid_b and the smallest distance between their covers.
@@ -47,15 +48,16 @@ CLUSTERS_DTYPE = np.dtype([("mbid", "U36"), ("cluster_id", np.uint32), ("cluster
 LOOKALIKES_DTYPE = np.dtype([("mbid_a", "U36"), ("mbid_b", "U36"), ("distance", np.uint8)])
 TEMPLATES_DTYPE = np.dtype([("key", "U64"), ("template_id", np.uint32), ("releases", np.uint32),
                             ("release_groups", np.uint32), ("artists", np.uint32)])
-# Hashes this close are one design, and a design over this many release groups is a template: the
-# picture names the design, not the release. That covers one label's stock sleeve and one artist's
-# series (show downloads, numbered volumes) alike.
+# Hashes this close are one design, as are same-artist hashes within the lookalike distance, and a
+# design over this many release groups is a template: the picture names the design, not the
+# release. That covers one label's stock sleeve and one artist's series (show downloads, numbered
+# volumes) alike.
 TEMPLATE_DISTANCE = 2
 TEMPLATE_RELEASE_GROUPS = 5
 # Same-artist hashes this close are one cover in the index
 DEDUP_DISTANCE = 2
-# Same-artist hashes this close are lookalikes, a pair at a time. Chosen by hand-checked pairs in
-# docs/results/2026-10-28-lookalike-pairs.md.
+# Same-artist hashes this close are lookalikes, a pair at a time. The largest distance with 45 of 50
+# hand-checked pairs the same picture, in docs/results/2026-10-28-lookalike-pairs.md.
 LOOKALIKE_DISTANCE = 6
 # On compilations, so sharing it says nothing about two covers
 VARIOUS_ARTISTS = "89ad4ac3-39f7-470e-963a-56509c546377"
@@ -411,8 +413,8 @@ def main() -> None:
     n_template_releases = len(np.unique(templates["key"].astype("U36")))  # mbid is key[:36]
     print(f"{n_covers:,} covers of {len(groups.clusters):,} releases in {len(covers_files)} prefixes "
           f"({time.monotonic() - start:.0f} s), written to {out_dir}")
-    print(f"Templates: {len(np.unique(templates['template_id'])):,} groups within {TEMPLATE_DISTANCE} bits over "
-          f"{TEMPLATE_RELEASE_GROUPS}+ release groups, {len(templates):,} covers of {n_template_releases:,} releases")
+    print(f"Templates: {len(np.unique(templates['template_id'])):,} designs over {TEMPLATE_RELEASE_GROUPS}+ release "
+          f"groups, {len(templates):,} covers of {n_template_releases:,} releases")
     by_distance = np.bincount(groups.lookalikes["distance"], minlength=args.lookalike_distance + 1)
     print(f"Lookalikes: {len(groups.lookalikes):,} same-artist pairs within {args.lookalike_distance} bits; "
           f"by distance: {', '.join(f'{d}: {n:,}' for d, n in enumerate(by_distance.tolist()) if n)}")

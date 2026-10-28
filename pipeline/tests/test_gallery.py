@@ -270,7 +270,7 @@ def test_the_cli_writes_groups_that_load_back_and_prints_their_counts(gallery, r
     rows = np.load(ran / "clusters.npy")
     assert dict(zip(rows["mbid"], rows["cluster_size"].tolist())) == {SQUARE: 3, TWIN: 3, COPY: 3, WIDE: 1, SMALL: 1, OTHER: 1}
     assert "7 covers of 6 releases in 3 prefixes" in out
-    assert "Templates: 0 groups" in out and "Lookalikes: 3 same-artist pairs within 8 bits; by distance: 0: 3" in out
+    assert "Templates: 0 designs" in out and "Lookalikes: 3 same-artist pairs within 8 bits; by distance: 0: 3" in out
     assert "Clusters: 4 within 2 bits" in out and "1 release: 3 clusters" in out and "3 releases: 1 cluster" in out
 
 
