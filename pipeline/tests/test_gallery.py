@@ -1,4 +1,6 @@
+import itertools
 import shutil
+import sys
 import tarfile
 
 import numpy as np
@@ -6,7 +8,8 @@ import pytest
 from PIL import Image
 
 from pipeline import config
-from pipeline.gallery import shard_and_hash
+from pipeline.gallery import cluster_duplicates, shard_and_hash
+from pipeline.gallery.cluster_duplicates import cluster, load_clusters
 from pipeline.gallery.shard_and_hash import is_done, process_prefix
 
 SQUARE = "00000000-0000-4000-8000-000000000001"
@@ -170,3 +173,118 @@ def test_a_library_upgrade_keeps_the_copy_done_and_records_the_hash_recipe(drive
     done.write_text(done.read_text().replace(shard_and_hash.HASH_RECIPE, "phash8-pillow11.3.0-scipy1.18.1-numpy0.0.0"))
     assert is_done("00", drive["00"], out)
     assert shard_and_hash.hash_recipe("00", out) == "phash8-pillow11.3.0-scipy1.18.1-numpy0.0.0"
+
+
+TWIN = "02000000-0000-4000-8000-000000000007"  # SQUARE's file, byte for byte, under another release
+
+
+@pytest.fixture
+def gallery(drive, tmp_path):
+    """The drive fixture sharded and hashed, plus TWIN in prefix 02. Returns the covers.npy paths."""
+    shutil.copy(config.IMAGE_ROOT / "00" / f"{SQUARE}.jpg", config.IMAGE_ROOT / "02" / f"{TWIN}.jpg")
+    drive["02"].append(f"02/{TWIN}.jpg")
+    out = tmp_path / "gallery"
+    for prefix in ("00", "01", "02"):
+        process_prefix(prefix, drive[prefix], out, workers=2)
+    return [out / f"{p}.covers.npy" for p in ("00", "01", "02")]
+
+
+def test_cluster_groups_identical_and_near_duplicate_covers_but_not_unrelated_ones(gallery):
+    clusters = cluster(gallery, max_distance=8)
+
+    assert set(clusters) == {SQUARE, WIDE, SMALL, COPY, OTHER, TWIN}  # releases, not files: EXTRA is SQUARE's
+    assert clusters[SQUARE] == clusters[TWIN] == clusters[COPY]
+    assert len({clusters[m] for m in (SQUARE, WIDE, SMALL, OTHER)}) == 4
+
+
+def write_covers(out, prefix, rows, recipe=shard_and_hash.HASH_RECIPE):
+    """A covers.npy and a done marker, as process_prefix leaves them, from (key, phash) rows."""
+    out.mkdir(parents=True, exist_ok=True)
+    covers = np.array([(key, phash, 500, 500) for key, phash in rows], dtype=shard_and_hash.COVERS_DTYPE)
+    np.save(out / f"{prefix}.covers.npy", covers)
+    (out / f"{prefix}.done").write_text(f"original-{recipe} 0123456789abcdef")
+    return out / f"{prefix}.covers.npy"
+
+
+def mbid(i):
+    return f"{i:08x}-0000-4000-8000-000000000000"
+
+
+def test_cluster_joins_hashes_up_to_max_distance_bits_apart_and_no_further(tmp_path):
+    base = 0x0123_4567_89AB_CDEF
+    eight = base ^ 0x8000_0400_0020_0101  # 8 bits flipped, spread over the 64
+    rows = [(mbid(0), base), (mbid(1), eight), (mbid(2), base ^ 0xFF00_0000_0000_0000),  # 8 adjacent bits
+            (mbid(3), base ^ 0x1FF), (mbid(4), ~base & (2**64 - 1))]  # 9 bits, and every bit
+    clusters = cluster([write_covers(tmp_path, "00", rows)], max_distance=8)
+
+    assert clusters[mbid(0)] == clusters[mbid(1)] == clusters[mbid(2)]
+    assert len({clusters[mbid(i)] for i in (0, 3, 4)}) == 3
+    assert len(set(cluster([tmp_path / "00.covers.npy"], max_distance=0).values())) == 5
+
+
+def test_cluster_finds_the_same_clusters_as_comparing_every_pair(tmp_path):
+    rng = np.random.default_rng(0)
+    hashes = []
+    for _ in range(150):  # each base hash with a few variants up to 12 bits away, some chaining
+        h = int(rng.integers(0, 2**63)) * 2 + int(rng.integers(0, 2))
+        hashes.append(h)
+        for _ in range(int(rng.integers(0, 4))):
+            for bit in rng.choice(64, size=int(rng.integers(1, 13)), replace=False):
+                h ^= 1 << int(bit)
+            hashes.append(h)
+    rows = [(mbid(i), h) for i, h in enumerate(hashes)]
+    clusters = cluster([write_covers(tmp_path, "00", rows)], max_distance=8)
+
+    expected = list(range(len(hashes)))  # union-find over every pair
+
+    def root(i):
+        while expected[i] != i:
+            i = expected[i]
+        return i
+
+    for i, j in itertools.combinations(range(len(hashes)), 2):
+        if (hashes[i] ^ hashes[j]).bit_count() <= 8:
+            expected[root(i)] = root(j)
+    same = {(i, j): root(i) == root(j) for i, j in itertools.combinations(range(len(hashes)), 2)}
+    chained = [p for p, joined in same.items() if joined and (hashes[p[0]] ^ hashes[p[1]]).bit_count() > 8]
+    assert sum(same.values()) > 100 and chained  # real clusters to find, some joined only through others
+    assert same == {(i, j): clusters[mbid(i)] == clusters[mbid(j)] for i, j in same}
+
+
+def test_cluster_refuses_prefixes_hashed_with_different_recipes_or_not_done(tmp_path):
+    files = [write_covers(tmp_path, "00", [(mbid(0), 1)]),
+             write_covers(tmp_path, "01", [(mbid(1), 1)], recipe="phash8-pillow11.3.0-scipy1.18.1-numpy0.0.0")]
+    with pytest.raises(ValueError, match="different recipes.*numpy0.0.0: 01"):
+        cluster(files, max_distance=8)
+
+    (tmp_path / "01.done").unlink()  # a prefix left pending after read errors has a partial covers.npy
+    with pytest.raises(ValueError, match="01 isn't done"):
+        cluster(files, max_distance=8)
+
+
+def test_the_cli_writes_clusters_that_load_back_and_prints_a_size_histogram(gallery, tmp_path, reload_config, monkeypatch, capsys):
+    reload_config(RS_DATA_DIR=tmp_path)  # GALLERY_DIR is where the gallery fixture wrote
+    monkeypatch.setattr(sys, "argv", ["cluster_duplicates"])
+    cluster_duplicates.main()
+
+    written = tmp_path / "gallery" / "clusters.npy"
+    assert load_clusters(written, max_distance=8) == cluster(gallery, max_distance=8)
+    rows = np.load(written)
+    assert dict(zip(rows["mbid"], rows["cluster_size"].tolist())) == {SQUARE: 3, TWIN: 3, COPY: 3, WIDE: 1, SMALL: 1, OTHER: 1}
+    out = capsys.readouterr().out
+    assert "7 covers of 6 releases in 3 prefixes: 4 clusters" in out
+    assert "1 release: 3 clusters" in out and "3 releases: 1 cluster" in out
+
+
+def test_loading_clusters_refuses_ones_made_with_another_distance_or_gallery(gallery, tmp_path, reload_config, monkeypatch):
+    reload_config(RS_DATA_DIR=tmp_path)
+    monkeypatch.setattr(sys, "argv", ["cluster_duplicates"])
+    cluster_duplicates.main()
+    written = tmp_path / "gallery" / "clusters.npy"
+
+    with pytest.raises(ValueError, match="stale"):
+        load_clusters(written, max_distance=4)
+    done = tmp_path / "gallery" / "01.done"
+    done.write_text(done.read_text() + "0")  # a catalog update redid prefix 01 with another cover list
+    with pytest.raises(ValueError, match="stale"):
+        load_clusters(written, max_distance=8)
