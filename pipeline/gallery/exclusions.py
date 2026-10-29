@@ -187,7 +187,7 @@ def write_exclusions(gallery_dir: Path, catalog_db: Path | None = None) -> np.nd
 
 def load_exclusions(gallery_dir: Path, catalog_db: Path | None = None) -> dict[str, str]:
     """{cover key: reason} from excluded.npy. Refuses a list made at other cutoffs, by another rule,
-    or from a gallery, catalog or templates that have changed since. Reads the whole catalog to check."""
+    or from a gallery or catalog that has changed since. Reads the whole catalog to check."""
     path = gallery_dir / "excluded.npy"
     recipe = path.with_suffix(".recipe")
     expected = exclusions_recipe(gallery_dir, catalog_fingerprint(Path(catalog_db or config.CATALOG_DB)))
