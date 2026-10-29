@@ -1,5 +1,6 @@
-// Keyboard shortcuts for the labeler page. The page decides `typing` (focus is in a text field)
-// and `modifier` (Command, Control or Option held, so ⌘V still pastes).
+// Keyboard shortcuts for the labeler page. The page decides `typing` (focus is in a text field),
+// `modifier` (Command, Control or Option held, so ⌘V still pastes) and `plainCommand` (Command or
+// Control without Shift or Option, so ⇧⌘Z, which is redo, doesn't undo).
 import { TAGS, type Kind, type Tag } from "./labels";
 
 export type HotkeyAction =
@@ -17,11 +18,16 @@ export const TAG_KEYS = "1234567890-=";
 export const KIND_KEYS: Record<Kind, string> = { positive: "p", negative: "n", unknown: "u" };
 const KIND_BY_KEY = Object.fromEntries(Object.entries(KIND_KEYS).map(([kind, key]) => [key, kind as Kind]));
 
-export function hotkeyAction(e: { key: string; typing: boolean; modifier: boolean }): HotkeyAction | null {
+export function hotkeyAction(e: {
+  key: string;
+  typing: boolean;
+  modifier: boolean;
+  plainCommand?: boolean;
+}): HotkeyAction | null {
   if (e.typing) return null;
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   // ⌘Z or Ctrl+Z reopens the last save; in a text field the browser's own undo runs instead
-  if (e.modifier) return key === "z" ? { type: "undo" } : null;
+  if (e.modifier) return key === "z" && e.plainCommand ? { type: "undo" } : null;
   if (Object.hasOwn(KIND_BY_KEY, key)) return { type: "kind", kind: KIND_BY_KEY[key] };
   const tagIndex = TAG_KEYS.indexOf(key);
   if (key.length === 1 && tagIndex !== -1) return { type: "tag", tag: TAGS[tagIndex] };

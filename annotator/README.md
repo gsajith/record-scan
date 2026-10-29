@@ -63,7 +63,8 @@ No shortcut fires while you type in a field, and none but undo fires while you h
 
 Undo steps back through the saves made since the page loaded, one per press. Saving a reopened
 photo adds a new label line, which replaces the old one, and moves on to the next photo you
-stepped back past, then to the queue. S on a reopened photo keeps its label and moves on.
+stepped back past, then to the queue. A record you fix carries on to the next reopened photos of
+the same clip that still had the old one. S on a reopened photo keeps its label and moves on.
 Reloading the page or switching sets clears the undo history.
 
 ## Where files go

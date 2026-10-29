@@ -30,9 +30,13 @@ describe("hotkeyAction", () => {
   });
 
   it("maps Command-Z or Control-Z to undo, but leaves a text field its own undo", () => {
-    expect(hotkeyAction({ key: "z", typing: false, modifier: true })).toEqual({ type: "undo" });
-    expect(hotkeyAction({ key: "z", typing: true, modifier: true })).toBeNull();
+    expect(hotkeyAction({ key: "z", typing: false, modifier: true, plainCommand: true })).toEqual({ type: "undo" });
+    expect(hotkeyAction({ key: "z", typing: true, modifier: true, plainCommand: true })).toBeNull();
     expect(press("z")).toBeNull();
+  });
+
+  it("leaves Shift-Command-Z (redo) and Option-Z alone", () => {
+    expect(hotkeyAction({ key: "z", typing: false, modifier: true, plainCommand: false })).toBeNull();
   });
 
   it("does nothing while typing in a field or with Command, Control or Option held", () => {

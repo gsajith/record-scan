@@ -2,8 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Release } from "@/lib/catalog";
 import { hotkeyAction, KIND_KEYS, TAG_KEYS } from "@/lib/hotkeys";
-import { tagsForNextFrame } from "@/lib/carry";
-import { emptyHistory, stepBack, stepForward, type History } from "@/lib/history";
+import { inheritsAnswer, tagsForNextFrame, type Answer } from "@/lib/carry";
+import { emptyHistory, park, stepBack, stepForward, type History } from "@/lib/history";
 import { KINDS, SETS, TAGS, type Kind, type SetName, type Split, type Tag } from "@/lib/labels";
 import type { QueueItem } from "@/lib/queue";
 import styles from "./page.module.css";
@@ -12,6 +12,10 @@ type Result = Release & { thumb: string };
 type Counts = Record<SetName, Record<Split, number>>;
 /** A frame as it was saved, so Undo can reopen it with the same fields. */
 type Saved = { photo: QueueItem; picked: Result | null; kind: Kind; tags: Tag[]; notes: string };
+
+function answerOf(s: Saved): Answer {
+  return { video: s.photo.video, kind: s.kind, mbid: s.picked?.mbid ?? null };
+}
 
 // Browsers often give HEIC files no type, so the extension counts too
 const IMAGE_EXT = /\.(heic|heif)$/i;
@@ -74,9 +78,15 @@ export default function LabelerPage() {
   const [kind, setKind] = useState<Kind>("positive");
   const [tags, setTags] = useState<Tag[]>([]);
   const [notes, setNotes] = useState("");
-  // Saves since the page loaded, and the saved frame on screen when Undo reopened it
-  const [history, setHistory] = useState<History<Saved>>(emptyHistory);
+  // Saves since the page loaded, and the saved frame on screen when Undo reopened it. A ref, so a
+  // save finishing after a paste or an undo reads the history as it is then.
+  const history = useRef<History<Saved>>(emptyHistory());
+  const [canUndo, setCanUndo] = useState(false);
   const [reopened, setReopened] = useState<Saved | null>(null);
+  const setHistory = useCallback((h: History<Saved>) => {
+    history.current = h;
+    setCanUndo(h.back.length > 0);
+  }, []);
 
   const searchRef = useRef<HTMLInputElement>(null);
   const lastVideo = useRef<string | null>(null);
@@ -165,6 +175,8 @@ export default function LabelerPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(errorText(body, "Couldn't save that photo."));
       setPhoto({ sha1: body.sha1, file: body.file, video: null, sourceUrl: body.sourceUrl });
+      // A reopened frame the paste replaced comes back after this photo is saved
+      if (reopened) setHistory(park(history.current, reopened));
       setReopened(null);
       clearPerPhoto();
       startNewRecord();
@@ -268,17 +280,31 @@ export default function LabelerPage() {
       setBusy(null);
       return;
     }
-    const forward = stepForward(history, { photo, picked: label.mbid ? picked : null, kind, tags, notes });
-    setHistory(forward.history);
+    const entry: Saved = { photo, picked: label.mbid ? picked : null, kind, tags, notes };
+    const before = reopened;
+    setReopened(null); // saved, so the frame on screen no longer holds its old label
+    const forward = stepForward(history.current, entry);
     // A photo pasted while the label was saving is already on screen; don't replace it
-    if (loadId.current !== loadBefore) return;
-    await moveTo(forward.next);
+    if (loadId.current !== loadBefore) {
+      setHistory(forward.next ? park(forward.history, forward.next) : forward.history);
+      return;
+    }
+    setHistory(forward.history);
+    let shown = forward.next;
+    // A record fixed here also fixes the next reopened frame that had carried the old one over
+    if (shown && before && inheritsAnswer(answerOf(shown), answerOf(before))) {
+      shown = { ...shown, picked: entry.picked, kind: entry.kind };
+    }
+    await moveTo(forward.next, shown);
   }
 
-  /** Show the next frame Undo stepped past, or the next photo from the queue when there is none. */
-  async function moveTo(next: Saved | null) {
+  /**
+   * Show the next frame Undo stepped past, or the next photo from the queue when there is none.
+   * `shown` is what to put on screen for `next`, when a fix carried over to it.
+   */
+  async function moveTo(next: Saved | null, shown = next) {
     if (next) {
-      showSaved(next);
+      showSaved(next, shown ?? next);
       setBusy(null);
     } else {
       setBusy("load");
@@ -286,15 +312,15 @@ export default function LabelerPage() {
     }
   }
 
-  /** Put a saved frame back on screen with the fields it was saved with. */
-  function showSaved(entry: Saved) {
+  /** Put a saved frame back on screen, filled in with `shown`: its saved fields unless a fix carried over. */
+  function showSaved(entry: Saved, shown = entry) {
     loadId.current += 1; // a queue load still in flight must not replace it
     setReopened(entry);
     setPhoto(entry.photo);
-    setPicked(entry.picked);
-    setKind(entry.kind);
-    setTags(entry.tags);
-    setNotes(entry.notes);
+    setPicked(shown.picked);
+    setKind(shown.kind);
+    setTags(shown.tags);
+    setNotes(shown.notes);
     setQuery("");
     setResults([]);
     setError(null);
@@ -303,18 +329,18 @@ export default function LabelerPage() {
 
   function undo() {
     if (busy !== null) return;
-    const back = stepBack(history, reopened);
+    const back = stepBack(history.current, reopened);
     if (!back) return;
     setHistory(back.history);
     showSaved(back.entry);
-    setStatus("Reopened your last save. Saving again replaces it");
+    setStatus("Reopened a saved photo. Saving again replaces its label");
   }
 
   function skip() {
     if (busy !== null) return;
     // A reopened frame keeps the label it already has
     if (reopened) {
-      const forward = stepForward(history, reopened);
+      const forward = stepForward(history.current, reopened);
       setHistory(forward.history);
       setStatus(null);
       moveTo(forward.next);
@@ -337,7 +363,12 @@ export default function LabelerPage() {
     function onKeyDown(e: KeyboardEvent) {
       // Enter on a focused button already clicks it
       if (e.key === "Enter" && e.target instanceof HTMLButtonElement) return;
-      const action = hotkeyAction({ key: e.key, typing: isTyping(e.target), modifier: e.metaKey || e.ctrlKey || e.altKey });
+      const action = hotkeyAction({
+        key: e.key,
+        typing: isTyping(e.target),
+        modifier: e.metaKey || e.ctrlKey || e.altKey,
+        plainCommand: (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey,
+      });
       if (!action) return;
       // A held key repeats; one press should save, skip or undo one photo
       if (e.repeat && (action.type === "skip" || action.type === "save" || action.type === "undo")) return;
@@ -545,7 +576,7 @@ export default function LabelerPage() {
           </p>
         )}
         <div className={styles.actions}>
-          <button type="button" className={styles.skip} disabled={busy !== null || history.back.length === 0} onClick={undo}>
+          <button type="button" className={styles.skip} disabled={busy !== null || !canUndo} onClick={undo}>
             Undo <kbd>⌘Z</kbd>
           </button>
           <button type="button" className={styles.skip} disabled={!photo || busy !== null} onClick={skip}>

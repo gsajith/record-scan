@@ -16,13 +16,13 @@ export function emptyHistory<T>(): History<T> {
 export function stepBack<T>(history: History<T>, reopened: T | null): { history: History<T>; entry: T } | null {
   const entry = history.back.at(-1);
   if (entry === undefined) return null;
-  return {
-    entry,
-    history: {
-      back: history.back.slice(0, -1),
-      ahead: reopened === null ? history.ahead : [reopened, ...history.ahead],
-    },
-  };
+  const back = { back: history.back.slice(0, -1), ahead: history.ahead };
+  return { entry, history: reopened === null ? back : park(back, reopened) };
+}
+
+/** Set aside a reopened frame that leaves the screen unsaved, so moving forward comes back to it. */
+export function park<T>(history: History<T>, reopened: T): History<T> {
+  return { back: history.back, ahead: [reopened, ...history.ahead] };
 }
 
 /**

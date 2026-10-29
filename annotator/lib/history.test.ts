@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyHistory, stepBack, stepForward, type History } from "./history";
+import { emptyHistory, park, stepBack, stepForward, type History } from "./history";
 
 // Saves the frames in order, the way the page records each save
 function saved(...frames: string[]): History<string> {
@@ -30,5 +30,11 @@ describe("history", () => {
     // The corrected saves are what a later undo reopens
     expect(stepBack(fixedC.history, null)?.entry).toBe("c2");
     expect(stepBack(stepBack(fixedC.history, null)!.history, "c2")?.entry).toBe("b2");
+  });
+
+  it("parks a reopened frame that leaves the screen, so saving the next photo comes back to it", () => {
+    const c = stepBack(saved("a", "b", "c"), null)!;
+    const afterPaste = stepForward(park(c.history, "c"), "pasted");
+    expect(afterPaste.next).toBe("c");
   });
 });
