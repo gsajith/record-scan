@@ -160,8 +160,8 @@ def load_labels(set_dir: Path) -> list[Label]      # reads set_dir/labels.jsonl,
 def append_label(set_dir: Path, label: Label) -> None   # append one JSON line, fsync
 
 # pipeline/gold/sample_frames.py   CLI: python -m pipeline.gold.sample_frames SET [--max-frames 8] [--fps 2]   # no --fps: frames spread evenly over the clip
-def sample_frames(video: Path, out_dir: Path, fps: float, max_frames: int) -> list[Path]   # ffmpeg -i video -vf fps=FPS -frames:v N out_dir/<video-stem>-%02d.jpg ; returns written paths
-def process_inbox(set_dir: Path, fps: float, max_frames: int) -> int   # every .mp4/.mov in set_dir/inbox -> frames in set_dir/inbox (videos moved to set_dir/inbox/done/) ; returns frame count
+def sample_frames(video: Path, out_dir: Path, fps: float | None, max_frames: int) -> list[Path]   # fps: ffmpeg -vf fps=FPS -frames:v N out_dir/<video-stem>-%02d.jpg ; None: N frames at (i + 0.5) * duration / N ; returns written paths
+def process_inbox(set_dir: Path, fps: float | None, max_frames: int) -> int   # every .mp4/.mov in set_dir/inbox -> frames in set_dir/inbox (videos moved to set_dir/inbox/done/) ; returns frame count
 ```
 JSONL record keys are exactly the `Label` field names. `labeled_at` is ISO 8601 UTC.
 

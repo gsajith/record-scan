@@ -32,6 +32,8 @@ def sample_frames(video: Path, out_dir: Path, fps: float | None, max_frames: int
         )
     else:
         length = _duration(video)
+        if length is None:
+            return []  # process_inbox reports it and skips the video
         for i in range(max_frames):
             at = (i + 0.5) * length / max_frames
             subprocess.run(
@@ -43,12 +45,19 @@ def sample_frames(video: Path, out_dir: Path, fps: float | None, max_frames: int
     return sorted(out_dir.glob(_frame_glob(video)))
 
 
-def _duration(video: Path) -> float:
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video)],
-        check=True, capture_output=True, text=True,
-    )
-    return float(out.stdout.strip())
+def _duration(video: Path) -> float | None:
+    """Seconds of video, or None when ffprobe can't tell. The video stream's own length comes
+    first: the container's is the longest stream, often the audio, and a seek past the end of the
+    video writes nothing."""
+    for entries in (["-select_streams", "v:0", "-show_entries", "stream=duration"], ["-show_entries", "format=duration"]):
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", *entries, "-of", "csv=p=0", str(video)], capture_output=True, text=True,
+        )
+        try:
+            return float(out.stdout.strip().splitlines()[0])
+        except (ValueError, IndexError):
+            continue
+    return None
 
 
 def _frame_glob(video: Path) -> str:

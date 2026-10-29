@@ -81,3 +81,15 @@ def test_spread_frames_keep_a_percent_in_the_name(tmp_path):
     make_video(video)
     frames = sample_frames(video, tmp_path / "out", fps=None, max_frames=2)
     assert [f.name for f in frames] == ["50% off-01.jpg", "50% off-02.jpg"]
+
+
+@needs_ffmpeg
+def test_spread_frames_follow_the_video_not_longer_audio(tmp_path):
+    # The container's length is the longest stream; frames must stay inside the video's
+    video = tmp_path / "short.mov"
+    subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=2:size=64x64:rate=10",
+         "-f", "lavfi", "-i", "sine=duration=6", "-c:a", "aac", str(video)],
+        check=True,
+    )
+    assert len(sample_frames(video, tmp_path / "out", fps=None, max_frames=4)) == 4
