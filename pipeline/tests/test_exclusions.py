@@ -2,9 +2,13 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
+from pipeline import config
 from pipeline.gallery import exclusions
-from pipeline.gallery.exclusions import load_measures, measure_prefix, spread
-from pipeline.gallery.shard_and_hash import process_prefix
+from pipeline.gallery.cluster_duplicates import LOOKALIKE_DISTANCE, group, groups_recipe, read_catalog, write_groups
+from pipeline.gallery.exclusions import (MEASURES_DTYPE, excluded, exclusions_hash, load_exclusions, load_measures,
+                                         measure_prefix, spread, write_exclusions)
+from pipeline.tests.test_gallery import write_catalog
+from pipeline.gallery.shard_and_hash import COVERS_DTYPE, HASH_RECIPE, process_prefix
 
 
 def mbid(i):
@@ -72,3 +76,91 @@ def test_measures_refuse_another_spread_recipe_or_an_unmeasured_prefix(gallery, 
 
     with pytest.raises(ValueError, match="00 .*rerun"):
         load_measures(gallery)
+
+
+def write_covers(out, rows):
+    """Prefix 00's covers.npy and done marker from (key, phash, width, height) rows."""
+    out.mkdir(parents=True, exist_ok=True)
+    np.save(out / "00.covers.npy", np.array(rows, dtype=COVERS_DTYPE))
+    (out / "00.done").write_text(f"original-{HASH_RECIPE} 0123456789abcdef")
+    return out / "00.covers.npy"
+
+
+PLACEHOLDER = 0x0123_4567_89AB_CDEF
+PICTURE = 0xFEDC_BA98_7654_3210
+RULE = {"blank_spread": 2.0, "strip_aspect": 2.5, "template_artists": 2}
+
+
+def test_placeholders_strips_and_blanks_are_excluded_but_small_covers_and_one_albums_copies_are_kept(tmp_path):
+    placeholder = [mbid(i) for i in range(5)]  # one picture over five unrelated albums
+    album = [mbid(10), mbid(11)]  # an album and its reissue, one picture
+    strip, flat, small = mbid(20), mbid(21), mbid(22)
+    rows = [(m, PLACEHOLDER, 500, 500) for m in placeholder] + [(m, PICTURE, 500, 500) for m in album]
+    rows += [(strip, 1, 500, 116), (flat, 2**40, 500, 500), (small, 2**50, 200, 200)]
+    covers = write_covers(tmp_path, rows)
+    artists = {m: [f"artist-{m}"] for m in placeholder} | {m: ["band"] for m in album}
+    release_groups = {m: f"rg-{m}" for m in placeholder} | {m: "rg-album" for m in album}
+    templates = group([covers], artists, release_groups, lookalike_distance=4).templates
+    measures = np.array([(key, w, h, 1.0 if key == flat else 40.0) for key, _, w, h in rows], dtype=MEASURES_DTYPE)
+
+    out = excluded(measures, templates, **RULE)
+
+    assert dict(zip(out["key"].tolist(), out["reason"].tolist())) == \
+        {**{m: "template" for m in placeholder}, strip: "strip", flat: "blank"}
+
+
+def test_a_template_of_one_artists_releases_is_kept_under_a_two_artist_rule(tmp_path):
+    series = [mbid(i) for i in range(5)]  # one artist's album, singles and remixes in its art
+    covers = write_covers(tmp_path, [(m, PLACEHOLDER, 500, 500) for m in series])
+    templates = group([covers], {m: ["band"] for m in series}, {m: f"rg-{m}" for m in series}, 4).templates
+    measures = np.array([(m, 500, 500, 40.0) for m in series], dtype=MEASURES_DTYPE)
+
+    assert len(templates) == 5
+    assert len(excluded(measures, templates, **RULE)) == 0
+
+
+@pytest.fixture
+def written(gallery, tmp_path, reload_config):
+    """The gallery fixture measured and grouped, with a catalog, and its exclusion list written."""
+    reload_config(RS_DATA_DIR=tmp_path)  # GALLERY_DIR is where the gallery fixture wrote
+    write_catalog({mbid(i): ["x"] for i in range(3)})
+    measure_prefix("00", gallery)
+    covers = sorted(gallery.glob("*.covers.npy"))
+    artists, release_groups, catalog = read_catalog(config.CATALOG_DB)
+    write_groups(group(covers, artists, release_groups, LOOKALIKE_DISTANCE), gallery,
+                 groups_recipe(covers, LOOKALIKE_DISTANCE, catalog))
+    write_exclusions(gallery)
+    return gallery
+
+
+def test_the_written_list_loads_back_with_a_reason_per_cover(written):
+    assert load_exclusions(written) == {mbid(1): "blank", mbid(2): "strip"}
+
+
+def test_loading_the_list_refuses_one_made_at_other_cutoffs_or_from_another_gallery_or_catalog(written, monkeypatch):
+    with monkeypatch.context() as m:
+        m.setattr(exclusions, "STRIP_ASPECT", 3.0)
+        with pytest.raises(ValueError, match="stale"):
+            load_exclusions(written)
+    with monkeypatch.context() as m:
+        m.setattr(exclusions, "EXCLUDE_RULE", "other-rule")
+        with pytest.raises(ValueError, match="stale"):
+            load_exclusions(written)
+
+    write_catalog({mbid(i): ["y"] for i in range(3)})
+    with pytest.raises(ValueError, match="stale"):
+        load_exclusions(written)
+    write_catalog({mbid(i): ["x"] for i in range(3)})
+    load_exclusions(written)
+
+    (written / "00.done").write_text((written / "00.done").read_text() + "0")  # the copy was redone
+    with pytest.raises(ValueError, match="stale"):
+        load_exclusions(written)
+
+
+def test_the_list_hash_changes_with_any_key_or_reason():
+    base = exclusions_hash({mbid(1): "blank"})
+
+    assert base == exclusions_hash({mbid(1): "blank"})
+    assert len({base, exclusions_hash({mbid(1): "strip"}), exclusions_hash({mbid(2): "blank"}),
+                exclusions_hash({})}) == 4

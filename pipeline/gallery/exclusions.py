@@ -1,10 +1,11 @@
-"""Measure the gallery's covers to find the ones that aren't usable covers.
+"""The exclusion list: gallery covers that aren't usable covers, kept out of the index and the eval.
 
     python -m pipeline.gallery.exclusions measure [--workers 9]
+    python -m pipeline.gallery.exclusions write
 
-Some downloaded fronts are placeholders, blanks, or strips and spines. This module records what
-it takes to find them, from the shards on the internal disk, with no drive. Nothing on the drive
-or in the shards is changed or deleted.
+Some downloaded fronts are placeholders, blanks, or strips and spines. Both steps read the shards
+on the internal disk and need no drive. Nothing on the drive or in the shards is changed or
+deleted: the list is a filter, so every call can be undone by changing a cutoff and rewriting it.
 
 measure writes, per prefix, to config.GALLERY_DIR:
 
@@ -12,10 +13,14 @@ measure writes, per prefix, to config.GALLERY_DIR:
     <prefix>.spread.recipe  SPREAD_RECIPE and the prefix's done marker, so a redone copy or a
                             changed measure makes the prefix measure again
 
-load_measures() joins them with each cover's width and height from <prefix>.covers.npy.
+write reads those, each cover's size from <prefix>.covers.npy and cluster_duplicates'
+templates.npy, and writes excluded.npy (one row per excluded cover: key and reason, see
+excluded()) with a .recipe naming the rule, its cutoffs and what it was made from.
+load_exclusions() refuses a stale list.
 """
 
 import argparse
+import hashlib
 import io
 import os
 import tarfile
@@ -28,12 +33,21 @@ import PIL
 from PIL import Image
 
 from pipeline import config
+from pipeline.gallery.cluster_duplicates import LOOKALIKE_DISTANCE, catalog_fingerprint, groups_recipe, load_templates
 
 # Change it whenever spread() would give different numbers, so old measures are refused
 SPREAD_RECIPE = f"rgb-std64-pillow{PIL.__version__}-numpy{np.__version__}"
 SPREAD_DTYPE = np.dtype([("key", "U64"), ("spread", np.float32)])
 MEASURES_DTYPE = np.dtype([("key", "U64"), ("width", np.uint32), ("height", np.uint32), ("spread", np.float32)])
+EXCLUDED_DTYPE = np.dtype([("key", "U64"), ("reason", "U8")])
 SIDE = 64
+# Names excluded()'s logic in the list's recipe. Change it whenever excluded() would pick other
+# covers from the same input and cutoffs, so an old list is refused.
+EXCLUDE_RULE = "blank-strip-template-v1"
+# Cutoffs, Gautham's pick from the contact sheets (docs/results/2026-10-28-gallery-sanitation.md)
+BLANK_SPREAD = 2.0
+STRIP_ASPECT = 2.5
+TEMPLATE_ARTISTS = 2
 
 
 def spread(img: Image.Image) -> float:
@@ -94,6 +108,68 @@ def load_measures(gallery_dir: Path) -> np.ndarray:
     return np.concatenate(parts) if parts else np.empty(0, dtype=MEASURES_DTYPE)
 
 
+def excluded(measures: np.ndarray, templates: np.ndarray, blank_spread: float, strip_aspect: float,
+             template_artists: int) -> np.ndarray:
+    """EXCLUDED_DTYPE rows, sorted by key: the covers that aren't usable covers, each with one
+    reason, the first that applies of "blank" (spread under blank_spread), "strip" (long side over
+    short side above strip_aspect) and "template" (in a templates.npy design over template_artists
+    or more artists). Small covers stay: they still embed, and dropping one leaves its release
+    unfindable."""
+    long_side = np.maximum(measures["width"], measures["height"]).astype(np.float64)
+    short_side = np.maximum(np.minimum(measures["width"], measures["height"]), 1).astype(np.float64)
+    shared = set(templates["key"][templates["artists"] >= template_artists].tolist())
+    reasons = np.full(len(measures), "", dtype=EXCLUDED_DTYPE["reason"])
+    reasons[np.isin(measures["key"], list(shared))] = "template"
+    reasons[long_side / short_side > strip_aspect] = "strip"
+    reasons[measures["spread"] < blank_spread] = "blank"
+    out = np.empty(int((reasons != "").sum()), dtype=EXCLUDED_DTYPE)
+    out["key"], out["reason"] = measures["key"][reasons != ""], reasons[reasons != ""]
+    return out[np.argsort(out["key"], kind="stable")]
+
+
+def exclusions_recipe(gallery_dir: Path, catalog: str) -> str:
+    """What excluded.npy was made from: the rule and its cutoffs, the spread recipe, and the
+    templates' recipe (their rule, the catalog fingerprint and every prefix's done marker)."""
+    covers_files = sorted(gallery_dir.glob("*.covers.npy"))
+    return (f"{EXCLUDE_RULE} blank{BLANK_SPREAD} strip{STRIP_ASPECT} template-artists{TEMPLATE_ARTISTS} "
+            f"{SPREAD_RECIPE} {groups_recipe(covers_files, LOOKALIKE_DISTANCE, catalog)}")
+
+
+def write_exclusions(gallery_dir: Path, catalog_db: Path | None = None) -> np.ndarray:
+    """Write gallery_dir/excluded.npy (EXCLUDED_DTYPE rows at this module's cutoffs) and its .recipe.
+    Returns the rows."""
+    catalog = catalog_fingerprint(Path(catalog_db or config.CATALOG_DB))
+    recipe = exclusions_recipe(gallery_dir, catalog)  # taken first, so a prefix redone meanwhile makes it stale
+    templates = load_templates(gallery_dir / "templates.npy", catalog_db=catalog_db)
+    rows = excluded(load_measures(gallery_dir), templates, BLANK_SPREAD, STRIP_ASPECT, TEMPLATE_ARTISTS)
+    path = gallery_dir / "excluded.npy"
+    path.with_suffix(".recipe").unlink(missing_ok=True)  # a failed write must not look current
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("wb") as f:
+        np.save(f, rows)
+    os.replace(tmp, path)
+    path.with_suffix(".recipe").write_text(recipe)
+    return rows
+
+
+def load_exclusions(gallery_dir: Path, catalog_db: Path | None = None) -> dict[str, str]:
+    """{cover key: reason} from excluded.npy. Refuses a list made at other cutoffs, by another rule,
+    or from a gallery, catalog or templates that have changed since. Reads the whole catalog to check."""
+    path = gallery_dir / "excluded.npy"
+    recipe = path.with_suffix(".recipe")
+    expected = exclusions_recipe(gallery_dir, catalog_fingerprint(Path(catalog_db or config.CATALOG_DB)))
+    if not recipe.exists() or recipe.read_text() != expected:
+        raise ValueError(f"{path} is missing or stale; rerun python -m pipeline.gallery.exclusions write")
+    rows = np.load(path)
+    return dict(zip(rows["key"].tolist(), rows["reason"].tolist()))
+
+
+def exclusions_hash(exclusions: dict[str, str]) -> str:
+    """A short hash of the excluded keys and reasons, for the eval's gallery hash."""
+    lines = "\n".join(f"{key}\t{reason}" for key, reason in sorted(exclusions.items()))
+    return hashlib.sha256(lines.encode()).hexdigest()[:12]
+
+
 def _measure(prefix: str) -> tuple[str, int, float]:
     start = time.monotonic()
     return prefix, measure_prefix(prefix, config.GALLERY_DIR), time.monotonic() - start
@@ -104,9 +180,17 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     measure = sub.add_parser("measure", help="record every cover's spread")
     measure.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    sub.add_parser("write", help="write excluded.npy at this module's cutoffs")
     args = parser.parse_args()
 
     gallery_dir = config.GALLERY_DIR
+    if args.command == "write":
+        rows = write_exclusions(gallery_dir)
+        reasons, counts = np.unique(rows["reason"], return_counts=True)
+        releases = len(np.unique(rows["key"].astype("U36")))  # mbid is key[:36]
+        print(f"Excluded {len(rows):,} covers of {releases:,} releases into {gallery_dir / 'excluded.npy'}: "
+              + ", ".join(f"{r} {n:,}" for r, n in zip(reasons.tolist(), counts.tolist())))
+        return
     prefixes = sorted(f.name.removesuffix(".covers.npy") for f in gallery_dir.glob("*.covers.npy"))
     if not prefixes:
         raise SystemExit(f"No covers.npy files in {gallery_dir}; run shard_and_hash first")
