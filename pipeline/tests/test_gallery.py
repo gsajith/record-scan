@@ -1,5 +1,7 @@
 import itertools
+import json
 import shutil
+import sqlite3
 import sys
 import tarfile
 
@@ -9,7 +11,7 @@ from PIL import Image
 
 from pipeline import config
 from pipeline.gallery import cluster_duplicates, shard_and_hash
-from pipeline.gallery.cluster_duplicates import cluster, load_clusters
+from pipeline.gallery.cluster_duplicates import group, load_clusters, load_lookalikes, load_templates
 from pipeline.gallery.shard_and_hash import is_done, process_prefix
 
 SQUARE = "00000000-0000-4000-8000-000000000001"
@@ -189,12 +191,14 @@ def gallery(drive, tmp_path):
     return [out / f"{p}.covers.npy" for p in ("00", "01", "02")]
 
 
-def test_cluster_groups_identical_and_near_duplicate_covers_but_not_unrelated_ones(gallery):
-    clusters = cluster(gallery, max_distance=8)
+def test_group_pairs_identical_and_near_duplicate_covers_but_not_unrelated_ones(gallery):
+    artists = {m: ["x"] for m in (SQUARE, WIDE, SMALL, COPY, OTHER, TWIN)}  # one artist, so only pictures differ
+    groups = group(gallery, artists, {}, lookalike_distance=8)
 
-    assert set(clusters) == {SQUARE, WIDE, SMALL, COPY, OTHER, TWIN}  # releases, not files: EXTRA is SQUARE's
-    assert clusters[SQUARE] == clusters[TWIN] == clusters[COPY]
-    assert len({clusters[m] for m in (SQUARE, WIDE, SMALL, OTHER)}) == 4
+    assert set(groups.clusters) == {SQUARE, WIDE, SMALL, COPY, OTHER, TWIN}  # releases, not files: EXTRA is SQUARE's
+    assert set(pairs(groups)) == {tuple(sorted(p)) for p in ((SQUARE, TWIN), (SQUARE, COPY), (COPY, TWIN))}
+    assert groups.clusters[SQUARE] == groups.clusters[TWIN] == groups.clusters[COPY]
+    assert len({groups.clusters[m] for m in (SQUARE, WIDE, SMALL, OTHER)}) == 4
 
 
 def write_covers(out, prefix, rows, recipe=shard_and_hash.HASH_RECIPE):
@@ -210,81 +214,270 @@ def mbid(i):
     return f"{i:08x}-0000-4000-8000-000000000000"
 
 
-def test_cluster_joins_hashes_up_to_max_distance_bits_apart_and_no_further(tmp_path):
-    base = 0x0123_4567_89AB_CDEF
-    eight = base ^ 0x8000_0400_0020_0101  # 8 bits flipped, spread over the 64
-    rows = [(mbid(0), base), (mbid(1), eight), (mbid(2), base ^ 0xFF00_0000_0000_0000),  # 8 adjacent bits
-            (mbid(3), base ^ 0x1FF), (mbid(4), ~base & (2**64 - 1))]  # 9 bits, and every bit
-    clusters = cluster([write_covers(tmp_path, "00", rows)], max_distance=8)
+def test_lookalikes_reach_the_distance_in_bits_and_no_further(tmp_path):
+    eight = BASE ^ 0x8000_0400_0020_0101  # 8 bits flipped, spread over the 64
+    rows = [(mbid(0), BASE), (mbid(1), eight), (mbid(2), BASE ^ 0xFF00_0000_0000_0000),  # 8 adjacent bits
+            (mbid(3), BASE ^ 0x1FF), (mbid(4), ~BASE & (2**64 - 1))]  # 9 bits, and every bit
+    groups = group([write_covers(tmp_path, "00", rows)], {mbid(i): ["x"] for i in range(5)}, {},
+                   lookalike_distance=8)
 
-    assert clusters[mbid(0)] == clusters[mbid(1)] == clusters[mbid(2)]
-    assert len({clusters[mbid(i)] for i in (0, 3, 4)}) == 3
-    assert len(set(cluster([tmp_path / "00.covers.npy"], max_distance=0).values())) == 5
+    assert {p for p, d in pairs(groups).items() if mbid(0) in p} == {(mbid(0), mbid(1)), (mbid(0), mbid(2))}
 
 
-def test_cluster_finds_the_same_clusters_as_comparing_every_pair(tmp_path):
-    rng = np.random.default_rng(0)
-    hashes = []
-    for _ in range(150):  # each base hash with a few variants up to 12 bits away, some chaining
-        h = int(rng.integers(0, 2**63)) * 2 + int(rng.integers(0, 2))
-        hashes.append(h)
-        for _ in range(int(rng.integers(0, 4))):
-            for bit in rng.choice(64, size=int(rng.integers(1, 13)), replace=False):
-                h ^= 1 << int(bit)
-            hashes.append(h)
-    rows = [(mbid(i), h) for i, h in enumerate(hashes)]
-    clusters = cluster([write_covers(tmp_path, "00", rows)], max_distance=8)
-
-    expected = list(range(len(hashes)))  # union-find over every pair
-
-    def root(i):
-        while expected[i] != i:
-            i = expected[i]
-        return i
-
-    for i, j in itertools.combinations(range(len(hashes)), 2):
-        if (hashes[i] ^ hashes[j]).bit_count() <= 8:
-            expected[root(i)] = root(j)
-    same = {(i, j): root(i) == root(j) for i, j in itertools.combinations(range(len(hashes)), 2)}
-    chained = [p for p, joined in same.items() if joined and (hashes[p[0]] ^ hashes[p[1]]).bit_count() > 8]
-    assert sum(same.values()) > 100 and chained  # real clusters to find, some joined only through others
-    assert same == {(i, j): clusters[mbid(i)] == clusters[mbid(j)] for i, j in same}
-
-
-def test_cluster_refuses_prefixes_hashed_with_different_recipes_or_not_done(tmp_path):
+def test_group_refuses_prefixes_hashed_with_different_recipes_or_not_done(tmp_path):
     files = [write_covers(tmp_path, "00", [(mbid(0), 1)]),
              write_covers(tmp_path, "01", [(mbid(1), 1)], recipe="phash8-pillow11.3.0-scipy1.18.1-numpy0.0.0")]
     with pytest.raises(ValueError, match="different recipes.*numpy0.0.0: 01"):
-        cluster(files, max_distance=8)
+        group(files, {}, {}, lookalike_distance=8)
 
     (tmp_path / "01.done").unlink()  # a prefix left pending after read errors has a partial covers.npy
     with pytest.raises(ValueError, match="01 isn't done"):
-        cluster(files, max_distance=8)
+        group(files, {}, {}, lookalike_distance=8)
 
 
-def test_the_cli_writes_clusters_that_load_back_and_prints_a_size_histogram(gallery, tmp_path, reload_config, monkeypatch, capsys):
+def write_catalog(artists, release_groups=None):
+    """A catalog.sqlite at config.CATALOG_DB holding just the releases' artist ids and release groups."""
+    config.CATALOG_DB.parent.mkdir(parents=True, exist_ok=True)
+    config.CATALOG_DB.unlink(missing_ok=True)
+    with sqlite3.connect(config.CATALOG_DB) as db:
+        db.execute("CREATE TABLE releases (mbid TEXT PRIMARY KEY, artist_ids_json TEXT NOT NULL, release_group TEXT)")
+        db.executemany("INSERT INTO releases VALUES (?, ?, ?)",
+                       [(m, json.dumps(a), (release_groups or {}).get(m)) for m, a in artists.items()])
+    db.close()
+
+
+GALLERY_ARTISTS = {SQUARE: ["x"], TWIN: ["x"], COPY: ["y", "x"], WIDE: ["x"], SMALL: ["z"], OTHER: ["x"]}
+
+
+@pytest.fixture
+def ran(gallery, tmp_path, reload_config, monkeypatch, capsys):
+    """The CLI run over the gallery fixture, with a catalog. Returns the gallery dir and what it printed."""
     reload_config(RS_DATA_DIR=tmp_path)  # GALLERY_DIR is where the gallery fixture wrote
-    monkeypatch.setattr(sys, "argv", ["cluster_duplicates"])
+    write_catalog(GALLERY_ARTISTS)
+    monkeypatch.setattr(sys, "argv", ["cluster_duplicates", "--lookalike-distance", "8"])
+    capsys.readouterr()
     cluster_duplicates.main()
+    return tmp_path / "gallery", capsys.readouterr().out
 
-    written = tmp_path / "gallery" / "clusters.npy"
-    assert load_clusters(written, max_distance=8) == cluster(gallery, max_distance=8)
-    rows = np.load(written)
+
+def test_the_cli_writes_groups_that_load_back_and_prints_their_counts(gallery, ran):
+    ran, out = ran
+    expected = group(gallery, GALLERY_ARTISTS, {}, lookalike_distance=8)
+
+    assert load_clusters(ran / "clusters.npy", lookalike_distance=8) == expected.clusters
+    assert (load_lookalikes(ran / "lookalikes.npy", lookalike_distance=8) == expected.lookalikes).all()
+    assert len(load_templates(ran / "templates.npy", lookalike_distance=8)) == 0
+    rows = np.load(ran / "clusters.npy")
     assert dict(zip(rows["mbid"], rows["cluster_size"].tolist())) == {SQUARE: 3, TWIN: 3, COPY: 3, WIDE: 1, SMALL: 1, OTHER: 1}
-    out = capsys.readouterr().out
-    assert "7 covers of 6 releases in 3 prefixes: 4 clusters" in out
-    assert "1 release: 3 clusters" in out and "3 releases: 1 cluster" in out
+    assert "7 covers of 6 releases in 3 prefixes" in out
+    assert "Templates: 0 designs" in out and "Lookalikes: 3 same-artist pairs within 8 bits; by distance: 0: 3" in out
+    assert "Clusters: 4 within 2 bits" in out and "1 release: 3 clusters" in out and "3 releases: 1 cluster" in out
 
 
-def test_loading_clusters_refuses_ones_made_with_another_distance_or_gallery(gallery, tmp_path, reload_config, monkeypatch):
-    reload_config(RS_DATA_DIR=tmp_path)
-    monkeypatch.setattr(sys, "argv", ["cluster_duplicates"])
-    cluster_duplicates.main()
-    written = tmp_path / "gallery" / "clusters.npy"
-
+def test_loading_groups_refuses_ones_made_by_another_version_of_the_rule(ran, monkeypatch):
+    ran, _ = ran
+    monkeypatch.setattr(cluster_duplicates, "GROUP_RULE", cluster_duplicates.GROUP_RULE + "-changed")
     with pytest.raises(ValueError, match="stale"):
-        load_clusters(written, max_distance=4)
-    done = tmp_path / "gallery" / "01.done"
+        load_clusters(ran / "clusters.npy", lookalike_distance=8)
+
+
+def test_loading_groups_refuses_ones_made_with_another_distance_gallery_or_catalog(ran):
+    ran, _ = ran
+    with pytest.raises(ValueError, match="stale"):
+        load_clusters(ran / "clusters.npy", lookalike_distance=6)
+    write_catalog(GALLERY_ARTISTS | {WIDE: ["w"]})  # a catalog update credits WIDE to another artist
+    with pytest.raises(ValueError, match="stale"):
+        load_lookalikes(ran / "lookalikes.npy", lookalike_distance=8)
+    write_catalog(GALLERY_ARTISTS, {COPY: "an album"})  # or files COPY under a release group
+    with pytest.raises(ValueError, match="stale"):
+        load_lookalikes(ran / "lookalikes.npy", lookalike_distance=8)
+    write_catalog(GALLERY_ARTISTS)
+    load_templates(ran / "templates.npy", lookalike_distance=8)  # the old catalog again, so current
+    done = ran / "01.done"
     done.write_text(done.read_text() + "0")  # a catalog update redid prefix 01 with another cover list
     with pytest.raises(ValueError, match="stale"):
-        load_clusters(written, max_distance=8)
+        load_templates(ran / "templates.npy", lookalike_distance=8)
+
+BASE = 0x0123_4567_89AB_CDEF
+
+
+def flip(h, *bits):
+    for bit in bits:
+        h ^= 1 << bit
+    return h
+
+
+def pairs(groups):
+    return {(str(a), str(b)): int(d) for a, b, d in groups.lookalikes[["mbid_a", "mbid_b", "distance"]]}
+
+
+def test_lookalikes_keep_a_same_artist_pair_and_drop_a_different_artist_pair_at_the_same_distance(tmp_path):
+    rows = [(mbid(0), BASE), (mbid(1), flip(BASE, 3, 40)), (mbid(2), flip(BASE, 9, 50))]
+    artists = {mbid(0): ["x"], mbid(1): ["x", "y"], mbid(2): ["z"]}  # 2 is 2 and 4 bits from the others
+
+    groups = group([write_covers(tmp_path, "00", rows)], artists, {}, lookalike_distance=4)
+
+    assert pairs(groups) == {(mbid(0), mbid(1)): 2}
+
+
+def test_lookalikes_are_pairs_so_a_near_b_near_c_does_not_pair_a_with_c(tmp_path):
+    b = flip(BASE, 1, 2, 3, 4)
+    rows = [(mbid(0), BASE), (mbid(1), b), (mbid(2), flip(b, 5, 6, 7, 8)), (mbid(3), BASE)]  # 3 is 0's copy
+    artists = {mbid(i): ["x"] for i in range(4)}
+
+    groups = group([write_covers(tmp_path, "00", rows)], artists, {}, lookalike_distance=4)
+
+    assert pairs(groups) == {(mbid(0), mbid(1)): 4, (mbid(1), mbid(2)): 4, (mbid(0), mbid(3)): 0, (mbid(1), mbid(3)): 4}
+
+
+def test_a_two_bit_group_over_five_release_groups_is_a_template_and_leaves_the_lookalikes_and_clusters(tmp_path):
+    chain = [BASE, flip(BASE, 1, 2), flip(BASE, 1, 2, 3, 4), flip(BASE, 1, 2, 3, 4, 5, 6), BASE]  # 2 bits a step
+    rows = [(mbid(i), h) for i, h in enumerate(chain)]  # releases 0 to 4, one artist and release group each
+    lookalike = flip(BASE, 10, 20, 30, 40)  # 4 bits from 0 and 4, more than 2 from every chain hash
+    rows += [(mbid(5), lookalike), (mbid(6), lookalike)]  # by another artist, so not part of the design
+    other = ~BASE & (2**64 - 1)
+    rows += [(mbid(7 + i), flip(other, *range(2 * i))) for i in range(4)]  # a chain over only 4 release groups
+    artists = {mbid(i): [a] for i, a in enumerate("abcd")} | {mbid(4): ["e", "a"]}  # 4 would pair with 0
+    artists |= {mbid(5): ["z"], mbid(6): ["z"], mbid(7): ["p"], mbid(8): ["q"], mbid(9): ["r"], mbid(10): ["s", "p"]}
+
+    groups = group([write_covers(tmp_path, "00", rows)], artists, {}, lookalike_distance=6)
+
+    templates = {str(k): (int(t), int(r), int(g), int(a)) for k, t, r, g, a in groups.templates}
+    assert templates == {mbid(i): (0, 5, 5, 5) for i in range(5)}  # 5 artists: a to e
+    assert pairs(groups) == {(mbid(5), mbid(6)): 0, (mbid(7), mbid(10)): 6}
+    clusters = groups.clusters
+    assert len(clusters) == 11 and len({clusters[mbid(i)] for i in range(5)}) == 5  # template releases stand alone
+    assert clusters[mbid(5)] == clusters[mbid(6)]
+    assert len(set(clusters.values())) == 10
+
+
+
+def test_one_artists_series_on_one_design_is_a_template_but_one_albums_reissues_are_not(tmp_path):
+    series = [(mbid(i), flip(BASE, i)) for i in range(5)]  # five albums by one artist, 2 bits apart at most
+    album = [(mbid(10 + i), flip(~BASE & (2**64 - 1), i)) for i in range(6)]  # one album, six reissues
+    artists = {mbid(i): ["dj"] for i in range(5)}
+    artists |= {mbid(10 + i): ["composer", "conductor", f"soloist {i}"] for i in range(6)}  # credits vary
+    release_groups = {mbid(i): f"volume {i}" for i in range(5)} | {mbid(10 + i): "the album" for i in range(6)}
+
+    groups = group([write_covers(tmp_path, "00", series + album)], artists, release_groups, lookalike_distance=4)
+
+    templates = {str(k): (int(t), int(r), int(g), int(a)) for k, t, r, g, a in groups.templates}
+    assert templates == {mbid(i): (0, 5, 5, 1) for i in range(5)}
+    assert set(pairs(groups)) == {(mbid(10 + i), mbid(10 + j)) for i, j in itertools.combinations(range(6), 2)}
+
+
+
+def test_a_series_joins_over_same_artist_links_up_to_the_lookalike_distance(tmp_path):
+    series = [(mbid(i), flip(BASE, *range(4 * i))) for i in range(5)]  # each 4 bits from the next
+    artists = {mbid(i): ["dj"] for i in range(5)}
+    release_groups = {mbid(i): f"volume {i}" for i in range(5)}
+    covers = [write_covers(tmp_path, "00", series)]
+
+    assert len(group(covers, artists, release_groups, lookalike_distance=4).templates) == 5
+    assert len(group(covers, artists, release_groups, lookalike_distance=2).templates) == 0
+
+def test_various_artists_alone_is_not_a_shared_artist(tmp_path):
+    va = cluster_duplicates.VARIOUS_ARTISTS
+    near = flip(BASE, 7, 8)
+    rows = [(mbid(0), BASE), (mbid(1), near), (mbid(2), BASE),  # compilations on one stock sleeve
+            (mbid(3), ~BASE & (2**64 - 1)), (mbid(4), ~near & (2**64 - 1))]
+    artists = {mbid(0): [va], mbid(1): [va], mbid(2): [va], mbid(3): [va, "x"], mbid(4): ["x"]}
+
+    groups = group([write_covers(tmp_path, "00", rows)], artists, {}, lookalike_distance=4)
+
+    assert pairs(groups) == {(mbid(3), mbid(4)): 2}
+    assert len(set(groups.clusters.values())) == 4
+
+
+
+def test_a_box_set_with_three_covers_stands_alone_and_does_not_join_its_albums(tmp_path):
+    album, other = BASE, ~BASE & (2**64 - 1)  # two unrelated albums by one artist
+    box = mbid(9)  # its fronts: both albums' pictures and its own
+    rows = [(mbid(0), album), (mbid(1), album), (mbid(2), other),
+            (f"{box}-1", album), (f"{box}-2", other), (f"{box}-3", flip(BASE, *range(0, 64, 2)))]
+    artists = {mbid(i): ["gould"] for i in (0, 1, 2, 9)}
+
+    clusters = group([write_covers(tmp_path, "00", rows)], artists, {}, lookalike_distance=4).clusters
+
+    assert clusters[mbid(0)] == clusters[mbid(1)]  # one album's reissue still dedups
+    assert len({clusters[mbid(0)], clusters[mbid(2)], clusters[box]}) == 3
+
+
+def components(n, links):
+    """Union-find: each of range(n)'s root once the links are joined."""
+    parent = list(range(n))
+
+    def root(i):
+        while parent[i] != i:
+            i = parent[i]
+        return i
+
+    for i, j in links:
+        parent[root(i)] = root(j)
+    return [root(i) for i in range(n)]
+
+
+def test_group_finds_what_comparing_every_pair_of_covers_finds(tmp_path):
+    rng = np.random.default_rng(0)
+    hashes = []
+    for _ in range(120):  # each base hash with a few variants up to 7 bits away, some chaining
+        h = int(rng.integers(0, 2**63)) * 2 + int(rng.integers(0, 2))
+        hashes.append(h)
+        for _ in range(int(rng.integers(0, 5))):
+            h = flip(h, *(int(b) for b in rng.choice(64, size=int(rng.integers(0, 8)), replace=False)))
+            hashes.append(h)
+    va = cluster_duplicates.VARIOUS_ARTISTS
+    release = [int(r) for r in rng.integers(0, len(hashes) * 3 // 4, size=len(hashes))]  # some have 2 covers
+    artists = {mbid(r): [str(a) for a in rng.choice([*"abcdefg", va], size=int(rng.integers(1, 3)), replace=False)]
+               for r in set(release)}
+    release_groups = {mbid(r): str(rng.choice(["g1", "g2", "g3"])) for r in set(release) if r % 2}  # the rest stand alone
+    design = int(rng.integers(0, 2**63))  # one design over six release groups, one with two releases
+    for n, rg in enumerate(["h1", "h2", "h3", "h4", "h5", "h6", "h6"]):
+        hashes.append(flip(design, *range(n % 3)))
+        release.append(1000 + n)
+        artists[mbid(1000 + n)] = ["a"]
+        release_groups[mbid(1000 + n)] = rg
+    rows = [(f"{mbid(r)}-{i}", h) for i, (r, h) in enumerate(zip(release, hashes))]  # keys are file stems
+
+    groups = group([write_covers(tmp_path, "00", rows)], artists, release_groups, lookalike_distance=8)
+
+    covers = range(len(hashes))
+    carried = [set() for _ in covers]  # a cover carries every artist of every release using its hash
+    for i, j in itertools.product(covers, covers):
+        if hashes[i] == hashes[j]:
+            carried[i] |= set(artists[mbid(release[j])]) - {va}
+
+    def bits(i, j):
+        return (hashes[i] ^ hashes[j]).bit_count()
+
+    designs = components(len(hashes), [(i, j) for i, j in itertools.combinations(covers, 2)
+                                        if bits(i, j) <= 2 or (bits(i, j) <= 8 and carried[i] & carried[j])])
+    spans, credits = {}, {}  # each design's release groups (a release without one stands alone), and artists
+    for i in covers:
+        spans.setdefault(designs[i], set()).add(release_groups.get(mbid(release[i]), mbid(release[i])))
+        credits.setdefault(designs[i], set()).update(carried[i])
+    template = [len(spans[designs[i]]) >= 5 for i in covers]
+    linked = [(i, j) for i, j in itertools.combinations(covers, 2)
+              if not template[i] and not template[j] and carried[i] & carried[j]]
+    expected = {}
+    for i, j in linked:
+        a, b = sorted((mbid(release[i]), mbid(release[j])))
+        if a != b and bits(i, j) <= 8:
+            expected[(a, b)] = min(expected.get((a, b), 64), bits(i, j))
+    # Dedup groups join covers within 2 bits, and each cover to its release unless the release is a box set
+    box_sets = {r for r in release if release.count(r) >= cluster_duplicates.BOX_SET_COVERS}
+    own = [(i, len(hashes) + release[i]) for i in covers if not template[i] and carried[i] and release[i] not in box_sets]
+    dedup = components(len(hashes) + max(release) + 1, [(i, j) for i, j in linked if bits(i, j) <= 2] + own)
+    dedup = dedup[len(hashes):]  # by release
+
+    design_releases = {}
+    for i in covers:
+        design_releases.setdefault(designs[i], set()).add(release[i])
+    assert {str(k): (int(r), int(g), int(a)) for k, r, g, a in groups.templates[["key", "releases", "release_groups", "artists"]]} == {
+        rows[i][0]: (len(design_releases[designs[i]]), len(spans[designs[i]]), len(credits[designs[i]]))
+        for i in covers if template[i]}
+    assert pairs(groups) == expected
+    same = {(a, b): dedup[a] == dedup[b] for a, b in itertools.combinations(sorted(set(release)), 2)}
+    chained = [p for p, joined in same.items() if joined and (mbid(p[0]), mbid(p[1])) not in expected]
+    assert any(template) and len(expected) > 50 and chained and box_sets  # real groups, some joined only through others
+    assert same == {(a, b): groups.clusters[mbid(a)] == groups.clusters[mbid(b)] for a, b in same}
