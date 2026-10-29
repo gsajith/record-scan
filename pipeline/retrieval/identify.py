@@ -3,7 +3,8 @@
     python -m pipeline.retrieval.identify photo.jpg --model NAME [--index DIR] [--k 5] [--views 1|3]
 
 --index defaults to config.EMB_DIR/<model>. Pass it to query an index built in another
-shard folder. The index must come from an embedder with the same signature as this one.
+shard folder. The index must come from an embedder with the same signature as this one, built
+under the gallery's current exclusion list.
 """
 
 import argparse
@@ -16,6 +17,7 @@ from PIL import Image
 
 from pipeline import config
 from pipeline.metadata.catalog import Catalog
+from pipeline.retrieval.build_index import require_current_exclusions
 from pipeline.retrieval.embedders import EMBEDDER_NAMES, Embedder, load_embedder, query_views
 
 
@@ -107,6 +109,7 @@ def main() -> None:
     index_dir = args.index or config.EMB_DIR / args.model
     if not (index_dir / "index.hnsw").is_file():
         raise SystemExit(f"No index in {index_dir}. Build one with: python -m pipeline.retrieval.build_index")
+    require_current_exclusions(index_dir)
     identifier = Identifier(load_embedder(args.model), index_dir, Catalog())
     for rank, m in enumerate(identifier.identify(Image.open(args.photo), args.k, args.views), 1):
         print(f"{rank}. {m.score:.3f}  {', '.join(m.artists) or '?'} - {m.title or '?'}  {m.mbid}")

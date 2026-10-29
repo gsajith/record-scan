@@ -77,6 +77,14 @@ def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construc
     return len(labels)
 
 
+def require_current_exclusions(index_dir: Path) -> None:
+    """Exit unless the index was built by main() under the gallery's current exclusion list."""
+    built_with = index_dir / "exclusions.txt"
+    if not built_with.exists() or built_with.read_text() != exclusions_hash(load_exclusions(config.GALLERY_DIR)):
+        raise SystemExit(f"{index_dir} was built under another exclusion list, or before there was one. "
+                         "Rebuild it with: python -m pipeline.retrieval.build_index")
+
+
 def stale_shards(shards: list[Path], cover_files: Callable[[str], list[str]]) -> list[str]:
     """Prefixes whose shard isn't done, by its own embedder, from the cover list cover_files gives now."""
     stale = []

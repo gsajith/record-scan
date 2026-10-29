@@ -102,6 +102,16 @@ def test_placeholders_strips_and_blanks_are_excluded_but_small_covers_and_one_al
         {**{m: "shared" for m in placeholder}, strip: "strip", flat: "blank"}
 
 
+def test_a_picture_over_many_artists_is_kept_when_its_releases_are_few_albums():
+    duets = [mbid(i) for i in range(12)]  # one album's editions, each credited to another singer first
+    measures = np.array([cover(m, SINGLE) for m in duets], dtype=MEASURES_DTYPE)
+    artists = {m: [f"singer-{i}"] for i, m in enumerate(duets)}
+    four_albums = {m: f"rg-{i % 4}" for i, m in enumerate(duets)}
+
+    assert len(excluded(measures, artists, four_albums, **RULE)) == 0
+    assert len(excluded(measures, artists, {m: f"rg-{i % 5}" for i, m in enumerate(duets)}, **RULE)) == 12
+
+
 def test_a_single_with_many_remixers_is_kept_since_only_first_artists_count():
     remixes = [mbid(i) for i in range(12)]  # one single's remix releases, each crediting another remixer
     measures = np.array([cover(m, SINGLE) for m in remixes], dtype=MEASURES_DTYPE)

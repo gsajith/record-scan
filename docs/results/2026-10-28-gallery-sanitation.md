@@ -9,7 +9,7 @@ repo root with `pipeline/.venv`.
 PYTHONPATH=. pipeline/.venv/bin/python -m pipeline.gallery.exclusions measure --workers 9   # 2c3d68c, 557 s
 PYTHONPATH=. pipeline/.venv/bin/python docs/results/2026-10-28-gallery-sanitation/sheets.py <out dir>   # 7c01470
 PYTHONPATH=. pipeline/.venv/bin/python -m pipeline.gallery.exclusions write   # c7e5f98, 30 s
-PYTHONPATH=. pipeline/.venv/bin/python docs/results/2026-10-28-gallery-sanitation/counts.py   # c7e5f98
+PYTHONPATH=. pipeline/.venv/bin/python docs/results/2026-10-28-gallery-sanitation/counts.py   # bb62f71
 ```
 
 The list's recipe reads
