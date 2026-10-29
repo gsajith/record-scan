@@ -113,6 +113,15 @@ def test_identify_max_pools_views_and_uses_clusters(catalog, index_dir):
     assert {m.mbid for m in clustered} == {ABBEY, HOMOGENIC}
 
 
+def test_build_index_leaves_out_excluded_covers(catalog, index_dir):
+    shards = sorted(index_dir.glob("*.npz"))
+    assert build_index(shards, 4, index_dir, M=16, ef_construction=100, excluded={ABBEY, ABBEY_REISSUE}) == 2
+
+    matches = Identifier(FixedEmbedder(E0), index_dir, catalog).identify(Image.new("RGB", (64, 64)), k=3, views=1)
+
+    assert [m.mbid for m in matches] == [DEBUT, HOMOGENIC]
+
+
 def test_build_index_rejects_wrong_dim(tmp_path):
     np.savez(tmp_path / "00.npz", uuids=np.array([ABBEY], dtype="U36"), embs=np.zeros((1, 3), np.float16),
              signature=FixedEmbedder.signature)
