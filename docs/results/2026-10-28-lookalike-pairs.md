@@ -1,6 +1,6 @@
 # Templates, lookalike pairs and dedup groups from the pHash
 
-Issue #68, replacing the chained clusters from #20. Code at `1840c97`, run 2026-10-28 on the 256
+Issue #68, replacing the chained clusters from #20. Code at `3610ea3`, run 2026-10-28 on the 256
 `covers.npy` files from `2026-10-27-gallery-pass.md` and the catalog built from
 `covers-2026-10-24.jsonl`. No drive.
 
@@ -21,11 +21,12 @@ and two covers share an artist when those sets meet.
 - A lookalike pair is two releases with covers up to N bits apart that share an artist, neither
   cover in a template. Pairs only, with no closure.
 - A dedup group is a connected component of hashes up to 2 bits apart that share an artist, plus
-  each release's own covers, template covers left out.
+  each release's own covers, template covers left out. A release with 3 or more covers stands
+  alone (see Box sets).
 
 N is 4, Gautham's pick (see Choosing N). The recipe sidecar beside each output reads
-`series-designs-v1 template2-5release-groups dedup2 lookalike4 catalog-c506a85dfac1bcee gallery-adc597dcc38e303f`.
-`series-designs-v1` is `GROUP_RULE`, which names the logic and changes whenever `group()` would
+`series-designs-v2 template2-5release-groups dedup2 boxset3 lookalike4 catalog-c506a85dfac1bcee gallery-adc597dcc38e303f`.
+`series-designs-v2` is `GROUP_RULE`, which names the logic and changes whenever `group()` would
 write different outputs for the same numbers. The catalog fingerprint hashes every release's
 mbid, artist ids and release group, and the gallery part hashes every prefix's done marker. The
 loaders refuse any other recipe. They read the whole catalog to check it, 11 to 14 s.
@@ -36,10 +37,10 @@ loaders refuse any other recipe. They read the whole catalog to check it, 11 to 
 |---|---|
 | covers | 3,977,195 |
 | releases | 3,962,307 |
-| time | 75 s, 6.1 GB peak memory |
+| time | 69 s, 6.8 GB peak memory |
 | templates | 4,819 designs, 64,678 covers of 64,630 releases |
 | lookalike pairs | 676,148 |
-| dedup groups | 3,624,445 |
+| dedup groups | 3,624,854 |
 | `templates.npy`, `lookalikes.npy`, `clusters.npy` | 18 MB, 195 MB, 602 MB |
 
 Lookalike pairs by distance in bits:
@@ -52,15 +53,27 @@ Dedup group sizes, in releases:
 
 | Size | Groups | Releases |
 |---|---|---|
-| 1 | 3,380,998 | 3,380,998 |
-| 2 | 192,058 | 384,116 |
-| 3 | 32,447 | 97,341 |
-| 4 | 10,392 | 41,568 |
-| 5 to 9 | 7,595 | 45,125 |
-| 10 to 99 | 955 | 13,159 |
+| 1 | 3,381,544 | 3,381,544 |
+| 2 | 191,974 | 383,948 |
+| 3 | 32,422 | 97,266 |
+| 4 | 10,379 | 41,516 |
+| 5 to 9 | 7,583 | 45,037 |
+| 10 to 99 | 952 | 12,996 |
 
-The largest dedup groups hold 85, 60, 52, 46 and 43 releases, against 568,997 for the chained
-clusters at 8 bits.
+The largest dedup groups hold 52, 46, 42, 41 and 40 releases, against 568,997 for the chained
+clusters at 8 bits. No dedup group spans more than 4 release groups.
+
+## Box sets
+
+The coordinator's contact sheets of the largest dedup groups at N = 6 showed box sets bridging
+albums. A release with many fronts joined all its covers' groups: a Glenn Gould group of 85
+releases mixed Bach's WTC, the Goldberg Variations, Schoenberg, Beethoven and Mozart through the
+Complete Original Jacket Collection, and a Doors group of 60 mixed The Doors, Waiting for the Sun
+and Morrison Hotel through A Collection. 6 dedup groups spanned 5 or more release groups, and 24
+groups spanning 3 or more held a release with 3 or more covers. The coordinator's fix: a release
+with 3 or more covers (`BOX_SET_COVERS`) stands alone in `clusters.npy`. Its covers' hashes still
+link other releases, and it still forms lookalike pairs. Without the rule, the run at N = 4 had
+3,624,445 dedup groups, the largest 85, 60, 52, 46 and 43 releases.
 
 ## Choosing the template rule
 
