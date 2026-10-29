@@ -3,7 +3,9 @@
     python -m pipeline.retrieval.build_index --model NAME [--M 32] [--ef-construction 200]
 
 Reads config.EMB_DIR/<model>/<prefix>.npz and writes index.hnsw, labels.npy (row id ->
-mbid, U36) and signature.txt beside them. Every shard must carry the same embedder
+mbid, U36) and signature.txt beside them. Covers in the gallery's exclusion list
+(pipeline.gallery.exclusions) are left out, and exclusions.txt records that list's hash, so
+changing the list needs a rebuild but no re-embedding. Every shard must carry the same embedder
 signature (see embedders.embedder_signature); shards from before signatures need
 re-embedding. It refuses to run while any shard is behind its .done marker or the catalog's
 current cover list for that prefix: run embed --all first. Prefixes with covers but no shard
@@ -12,13 +14,14 @@ yet are left out with a warning, so a few embedded prefixes still make a test in
 
 import argparse
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 import hnswlib
 import numpy as np
 
 from pipeline import config
+from pipeline.gallery.exclusions import exclusions_hash, load_exclusions
 from pipeline.gallery.shard_and_hash import PREFIXES
 from pipeline.metadata.catalog import Catalog
 from pipeline.retrieval.embed import is_done
@@ -26,12 +29,15 @@ from pipeline.retrieval.embed import is_done
 SHARD_GLOB = "[0-9a-f][0-9a-f].npz"  # skips the .tmp.npz an interrupted embed run leaves
 
 
-def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construction: int) -> int:
-    """Index every row of every shard under cosine distance. Returns the row count."""
+def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construction: int,
+                excluded: Collection[str] = ()) -> int:
+    """Index every row of every shard under cosine distance, except covers whose key is in excluded
+    (see pipeline.gallery.exclusions). Returns the row count."""
     if not shards:
         raise SystemExit(f"No embedding shards to index in {out_dir}")
     parts = []
     signatures = set()
+    excluded_keys = np.array(list(excluded), dtype="U64")
     for shard in shards:
         with np.load(shard) as data:
             if "signature" not in data:
@@ -40,6 +46,9 @@ def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construc
             uuids, embs = data["uuids"].astype("U36"), data["embs"]
         if embs.ndim != 2 or embs.shape[1] != dim or len(uuids) != len(embs):
             raise SystemExit(f"{shard} holds {embs.shape} vectors for {len(uuids)} ids, expected dim {dim}")
+        # A shard row's id is its cover's file stem, since embed skips extra fronts (<mbid>-<cover_id>)
+        keep = ~np.isin(uuids, excluded_keys)
+        uuids, embs = uuids[keep], embs[keep]
         if len(uuids):  # a prefix with no covers; hnswlib fails on zero rows when they come first
             parts.append((uuids, embs))
     if not parts:
@@ -66,6 +75,14 @@ def build_index(shards: list[Path], dim: int, out_dir: Path, M: int, ef_construc
     os.replace(out_dir / "labels.npy.tmp", out_dir / "labels.npy")
     (out_dir / "signature.txt").write_text(signatures.pop())
     return len(labels)
+
+
+def require_current_exclusions(index_dir: Path) -> None:
+    """Exit unless the index was built by main() under the gallery's current exclusion list."""
+    built_with = index_dir / "exclusions.txt"
+    if not built_with.exists() or built_with.read_text() != exclusions_hash(load_exclusions(config.GALLERY_DIR)):
+        raise SystemExit(f"{index_dir} was built under another exclusion list, or before there was one. "
+                         "Rebuild it with: python -m pipeline.retrieval.build_index")
 
 
 def stale_shards(shards: list[Path], cover_files: Callable[[str], list[str]]) -> list[str]:
@@ -96,8 +113,12 @@ def main() -> None:
         print(f"Warning: {len(missing)} prefixes with covers have no shard yet, so the index is partial. "
               f"Run embed --model {args.model} --all for the full catalog.")
     dim = np.load(shards[0])["embs"].shape[1] if shards else 0
-    n = build_index(shards, dim, emb_dir, args.M, args.ef_construction)
-    print(f"Indexed {n:,} vectors ({dim}-d) from {len(shards)} shards into {emb_dir / 'index.hnsw'}")
+    excluded = load_exclusions(config.GALLERY_DIR)
+    (emb_dir / "exclusions.txt").unlink(missing_ok=True)  # a build that fails must not name the new list
+    n = build_index(shards, dim, emb_dir, args.M, args.ef_construction, excluded)
+    (emb_dir / "exclusions.txt").write_text(exclusions_hash(excluded))  # which list the index left out
+    print(f"Indexed {n:,} vectors ({dim}-d) from {len(shards)} shards into {emb_dir / 'index.hnsw'}, "
+          f"leaving out the {len(excluded):,} covers in the exclusion list")
 
 
 if __name__ == "__main__":
