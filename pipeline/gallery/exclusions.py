@@ -13,9 +13,9 @@ measure writes, per prefix, to config.GALLERY_DIR:
     <prefix>.spread.recipe  SPREAD_RECIPE and the prefix's done marker, so a redone copy or a
                             changed measure makes the prefix measure again
 
-write reads those, each cover's size from <prefix>.covers.npy and cluster_duplicates'
-templates.npy, and writes excluded.npy (one row per excluded cover: key and reason, see
-excluded()) with a .recipe naming the rule, its cutoffs and what it was made from.
+write reads those, each cover's size and pHash from <prefix>.covers.npy and the releases' artists
+and release groups from the catalog, and writes excluded.npy (one row per excluded cover: key and
+reason, see excluded()) with a .recipe naming the rule, its cutoffs and what it was made from.
 load_exclusions() refuses a stale list.
 """
 
@@ -25,6 +25,7 @@ import io
 import os
 import tarfile
 import time
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -33,21 +34,23 @@ import PIL
 from PIL import Image
 
 from pipeline import config
-from pipeline.gallery.cluster_duplicates import LOOKALIKE_DISTANCE, catalog_fingerprint, groups_recipe, load_templates
+from pipeline.gallery.cluster_duplicates import VARIOUS_ARTISTS, catalog_fingerprint, gallery_fingerprint, read_catalog
 
 # Change it whenever spread() would give different numbers, so old measures are refused
 SPREAD_RECIPE = f"rgb-std64-pillow{PIL.__version__}-numpy{np.__version__}"
 SPREAD_DTYPE = np.dtype([("key", "U64"), ("spread", np.float32)])
-MEASURES_DTYPE = np.dtype([("key", "U64"), ("width", np.uint32), ("height", np.uint32), ("spread", np.float32)])
+MEASURES_DTYPE = np.dtype([("key", "U64"), ("phash", np.uint64), ("width", np.uint32), ("height", np.uint32),
+                           ("spread", np.float32)])
 EXCLUDED_DTYPE = np.dtype([("key", "U64"), ("reason", "U8")])
 SIDE = 64
 # Names excluded()'s logic in the list's recipe. Change it whenever excluded() would pick other
 # covers from the same input and cutoffs, so an old list is refused.
-EXCLUDE_RULE = "blank-strip-template-v1"
+EXCLUDE_RULE = "blank-strip-shared-v1"
 # Cutoffs, Gautham's pick from the contact sheets (docs/results/2026-10-28-gallery-sanitation.md)
-BLANK_SPREAD = 2.0
+BLANK_SPREAD = 1.0
 STRIP_ASPECT = 2.5
-TEMPLATE_ARTISTS = 2
+SHARED_RELEASE_GROUPS = 5
+SHARED_FIRST_ARTISTS = 10
 
 
 def spread(img: Image.Image) -> float:
@@ -101,25 +104,32 @@ def load_measures(gallery_dir: Path) -> np.ndarray:
         spreads = np.load(gallery_dir / f"{prefix}.spread.npy")
         by_key = dict(zip(spreads["key"].tolist(), spreads["spread"].tolist()))
         rows = np.empty(len(covers), dtype=MEASURES_DTYPE)
-        for field in ("key", "width", "height"):
+        for field in ("key", "phash", "width", "height"):
             rows[field] = covers[field]
         rows["spread"] = [by_key[k] for k in covers["key"].tolist()]  # the shard holds every cover in covers.npy
         parts.append(rows)
     return np.concatenate(parts) if parts else np.empty(0, dtype=MEASURES_DTYPE)
 
 
-def excluded(measures: np.ndarray, templates: np.ndarray, blank_spread: float, strip_aspect: float,
-             template_artists: int) -> np.ndarray:
-    """EXCLUDED_DTYPE rows, sorted by key: the covers that aren't usable covers, each with one
-    reason, the first that applies of "blank" (spread under blank_spread), "strip" (long side over
-    short side above strip_aspect) and "template" (in a templates.npy design over template_artists
-    or more artists). Small covers stay: they still embed, and dropping one leaves its release
-    unfindable."""
+def excluded(measures: np.ndarray, artists: Mapping[str, Sequence[str]], release_groups: Mapping[str, str | None],
+             blank_spread: float, strip_aspect: float, shared_release_groups: int, shared_first_artists: int) -> np.ndarray:
+    """EXCLUDED_DTYPE rows, sorted by key: the covers that aren't usable covers, each with the first
+    reason that applies of
+
+    - "blank": spread under blank_spread.
+    - "strip": long side over short side above strip_aspect (strips, spines, inserts).
+    - "shared": one exact pHash over shared_release_groups or more release groups whose releases
+      have shared_first_artists or more distinct first credited artists, Various Artists skipped.
+      Label stock sleeves and placeholders: the picture can't name a release. Counting first
+      artists keeps one artist's single with many remixers.
+
+    artists maps a release's mbid to its artist ids in credit order, release_groups to its release
+    group (a missing or None one stands alone). Small covers stay: they still embed, and dropping
+    one leaves its release unfindable."""
     long_side = np.maximum(measures["width"], measures["height"]).astype(np.float64)
     short_side = np.maximum(np.minimum(measures["width"], measures["height"]), 1).astype(np.float64)
-    shared = set(templates["key"][templates["artists"] >= template_artists].tolist())
     reasons = np.full(len(measures), "", dtype=EXCLUDED_DTYPE["reason"])
-    reasons[np.isin(measures["key"], list(shared))] = "template"
+    reasons[_shared(measures, artists, release_groups, shared_release_groups, shared_first_artists)] = "shared"
     reasons[long_side / short_side > strip_aspect] = "strip"
     reasons[measures["spread"] < blank_spread] = "blank"
     out = np.empty(int((reasons != "").sum()), dtype=EXCLUDED_DTYPE)
@@ -127,21 +137,44 @@ def excluded(measures: np.ndarray, templates: np.ndarray, blank_spread: float, s
     return out[np.argsort(out["key"], kind="stable")]
 
 
+def _shared(measures: np.ndarray, artists: Mapping[str, Sequence[str]], release_groups: Mapping[str, str | None],
+            min_release_groups: int, min_first_artists: int) -> np.ndarray:
+    """Whether each cover's exact pHash spans min_release_groups or more release groups and
+    min_first_artists or more distinct first credited artists."""
+    _, hash_of = np.unique(measures["phash"], return_inverse=True)
+    mbids = measures["key"].astype("U36").tolist()  # mbid is key[:36]
+    _, group_of = np.unique([release_groups.get(m) or m for m in mbids], return_inverse=True)
+    first = [next((a for a in artists.get(m, ()) if a != VARIOUS_ARTISTS), "") for m in mbids]
+    first_names, first_of = np.unique(first, return_inverse=True)
+    has_first = first_names[first_of] != ""
+
+    def distinct(values: np.ndarray, rows: np.ndarray) -> np.ndarray:
+        n = int(values.max()) + 1 if len(values) else 1
+        pairs = np.unique(hash_of[rows].astype(np.int64) * n + values[rows])
+        return np.bincount(pairs // n, minlength=int(hash_of.max()) + 1 if len(hash_of) else 0)
+
+    everyone = np.arange(len(measures))
+    groups = distinct(group_of, everyone)
+    first_artists = distinct(first_of, everyone[has_first])
+    return (groups[hash_of] >= min_release_groups) & (first_artists[hash_of] >= min_first_artists)
+
+
 def exclusions_recipe(gallery_dir: Path, catalog: str) -> str:
-    """What excluded.npy was made from: the rule and its cutoffs, the spread recipe, and the
-    templates' recipe (their rule, the catalog fingerprint and every prefix's done marker)."""
+    """What excluded.npy was made from: the rule and its cutoffs, the spread recipe, the catalog's
+    fingerprint (artists and release groups) and every prefix's done marker."""
     covers_files = sorted(gallery_dir.glob("*.covers.npy"))
-    return (f"{EXCLUDE_RULE} blank{BLANK_SPREAD} strip{STRIP_ASPECT} template-artists{TEMPLATE_ARTISTS} "
-            f"{SPREAD_RECIPE} {groups_recipe(covers_files, LOOKALIKE_DISTANCE, catalog)}")
+    return (f"{EXCLUDE_RULE} blank{BLANK_SPREAD} strip{STRIP_ASPECT} shared{SHARED_RELEASE_GROUPS}release-groups-"
+            f"{SHARED_FIRST_ARTISTS}first-artists {SPREAD_RECIPE} catalog-{catalog} "
+            f"gallery-{gallery_fingerprint(covers_files)}")
 
 
 def write_exclusions(gallery_dir: Path, catalog_db: Path | None = None) -> np.ndarray:
     """Write gallery_dir/excluded.npy (EXCLUDED_DTYPE rows at this module's cutoffs) and its .recipe.
     Returns the rows."""
-    catalog = catalog_fingerprint(Path(catalog_db or config.CATALOG_DB))
+    artists, release_groups, catalog = read_catalog(Path(catalog_db or config.CATALOG_DB))
     recipe = exclusions_recipe(gallery_dir, catalog)  # taken first, so a prefix redone meanwhile makes it stale
-    templates = load_templates(gallery_dir / "templates.npy", catalog_db=catalog_db)
-    rows = excluded(load_measures(gallery_dir), templates, BLANK_SPREAD, STRIP_ASPECT, TEMPLATE_ARTISTS)
+    rows = excluded(load_measures(gallery_dir), artists, release_groups, BLANK_SPREAD, STRIP_ASPECT,
+                    SHARED_RELEASE_GROUPS, SHARED_FIRST_ARTISTS)
     path = gallery_dir / "excluded.npy"
     path.with_suffix(".recipe").unlink(missing_ok=True)  # a failed write must not look current
     tmp = path.with_name(path.name + ".tmp")

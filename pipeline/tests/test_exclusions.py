@@ -2,13 +2,12 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from pipeline import config
 from pipeline.gallery import exclusions
-from pipeline.gallery.cluster_duplicates import LOOKALIKE_DISTANCE, group, groups_recipe, read_catalog, write_groups
+from pipeline.gallery.cluster_duplicates import VARIOUS_ARTISTS
 from pipeline.gallery.exclusions import (MEASURES_DTYPE, excluded, exclusions_hash, load_exclusions, load_measures,
                                          measure_prefix, spread, write_exclusions)
 from pipeline.tests.test_gallery import write_catalog
-from pipeline.gallery.shard_and_hash import COVERS_DTYPE, HASH_RECIPE, process_prefix
+from pipeline.gallery.shard_and_hash import process_prefix
 
 
 def mbid(i):
@@ -78,57 +77,48 @@ def test_measures_refuse_another_spread_recipe_or_an_unmeasured_prefix(gallery, 
         load_measures(gallery)
 
 
-def write_covers(out, rows):
-    """Prefix 00's covers.npy and done marker from (key, phash, width, height) rows."""
-    out.mkdir(parents=True, exist_ok=True)
-    np.save(out / "00.covers.npy", np.array(rows, dtype=COVERS_DTYPE))
-    (out / "00.done").write_text(f"original-{HASH_RECIPE} 0123456789abcdef")
-    return out / "00.covers.npy"
+PLACEHOLDER, PICTURE, SINGLE = 0x0123_4567_89AB_CDEF, 0xFEDC_BA98_7654_3210, 0x0F0F_0F0F_0F0F_0F0F
+RULE = {"blank_spread": 1.0, "strip_aspect": 2.5, "shared_release_groups": 5, "shared_first_artists": 10}
 
 
-PLACEHOLDER = 0x0123_4567_89AB_CDEF
-PICTURE = 0xFEDC_BA98_7654_3210
-RULE = {"blank_spread": 2.0, "strip_aspect": 2.5, "template_artists": 2}
+def cover(key, phash=None, width=500, height=500, spread=40.0):
+    """A MEASURES_DTYPE row; by default a picture of its own."""
+    return key, int(key[:8], 16) * 0x9E37_79B9 if phash is None else phash, width, height, spread
 
 
-def test_placeholders_strips_and_blanks_are_excluded_but_small_covers_and_one_albums_copies_are_kept(tmp_path):
-    placeholder = [mbid(i) for i in range(5)]  # one picture over five unrelated albums
-    album = [mbid(10), mbid(11)]  # an album and its reissue, one picture
-    strip, flat, small = mbid(20), mbid(21), mbid(22)
-    rows = [(m, PLACEHOLDER, 500, 500) for m in placeholder] + [(m, PICTURE, 500, 500) for m in album]
-    rows += [(strip, 1, 500, 116), (flat, 2**40, 500, 500), (small, 2**50, 200, 200)]
-    covers = write_covers(tmp_path, rows)
+def test_placeholders_strips_and_blanks_are_excluded_but_small_covers_and_one_albums_copies_are_kept():
+    placeholder = [mbid(i) for i in range(10)]  # one picture over ten unrelated albums
+    album = [mbid(20), mbid(21)]  # an album and its reissue, one picture
+    strip, flat, small = mbid(30), mbid(31), mbid(32)
+    measures = np.array([cover(m, PLACEHOLDER) for m in placeholder] + [cover(m, PICTURE) for m in album]
+                        + [cover(strip, width=500, height=116), cover(flat, spread=0.5),
+                           cover(small, width=200, height=200)], dtype=MEASURES_DTYPE)
     artists = {m: [f"artist-{m}"] for m in placeholder} | {m: ["band"] for m in album}
     release_groups = {m: f"rg-{m}" for m in placeholder} | {m: "rg-album" for m in album}
-    templates = group([covers], artists, release_groups, lookalike_distance=4).templates
-    measures = np.array([(key, w, h, 1.0 if key == flat else 40.0) for key, _, w, h in rows], dtype=MEASURES_DTYPE)
 
-    out = excluded(measures, templates, **RULE)
+    out = excluded(measures, artists, release_groups, **RULE)
 
     assert dict(zip(out["key"].tolist(), out["reason"].tolist())) == \
-        {**{m: "template" for m in placeholder}, strip: "strip", flat: "blank"}
+        {**{m: "shared" for m in placeholder}, strip: "strip", flat: "blank"}
 
 
-def test_a_template_of_one_artists_releases_is_kept_under_a_two_artist_rule(tmp_path):
-    series = [mbid(i) for i in range(5)]  # one artist's album, singles and remixes in its art
-    covers = write_covers(tmp_path, [(m, PLACEHOLDER, 500, 500) for m in series])
-    templates = group([covers], {m: ["band"] for m in series}, {m: f"rg-{m}" for m in series}, 4).templates
-    measures = np.array([(m, 500, 500, 40.0) for m in series], dtype=MEASURES_DTYPE)
+def test_a_single_with_many_remixers_is_kept_since_only_first_artists_count():
+    remixes = [mbid(i) for i in range(12)]  # one single's remix releases, each crediting another remixer
+    measures = np.array([cover(m, SINGLE) for m in remixes], dtype=MEASURES_DTYPE)
+    artists = {m: ["deadmau5", f"remixer-{i}"] for i, m in enumerate(remixes)}
 
-    assert len(templates) == 5
-    assert len(excluded(measures, templates, **RULE)) == 0
+    assert len(excluded(measures, artists, {m: f"rg-{m}" for m in remixes}, **RULE)) == 0
+    # Various Artists is skipped, so a compilation counts its first named artist
+    compilations = {m: [VARIOUS_ARTISTS, f"artist-{i}"] for i, m in enumerate(remixes)}
+    assert len(excluded(measures, compilations, {m: f"rg-{m}" for m in remixes}, **RULE)) == 12
 
 
 @pytest.fixture
 def written(gallery, tmp_path, reload_config):
-    """The gallery fixture measured and grouped, with a catalog, and its exclusion list written."""
+    """The gallery fixture measured, with a catalog, and its exclusion list written."""
     reload_config(RS_DATA_DIR=tmp_path)  # GALLERY_DIR is where the gallery fixture wrote
     write_catalog({mbid(i): ["x"] for i in range(3)})
     measure_prefix("00", gallery)
-    covers = sorted(gallery.glob("*.covers.npy"))
-    artists, release_groups, catalog = read_catalog(config.CATALOG_DB)
-    write_groups(group(covers, artists, release_groups, LOOKALIKE_DISTANCE), gallery,
-                 groups_recipe(covers, LOOKALIKE_DISTANCE, catalog))
     write_exclusions(gallery)
     return gallery
 

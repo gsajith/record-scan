@@ -336,12 +336,18 @@ def groups_recipe(covers_files: list[Path], lookalike_distance: int, catalog: st
     """What the three outputs were made from: the rule's version, distances and cutoff, the catalog's
     fingerprint and every prefix's done marker, which holds its hash recipe and cover list. A
     catalog update or a new rule makes old outputs stale."""
+    return (f"{GROUP_RULE} template{TEMPLATE_DISTANCE}-{TEMPLATE_RELEASE_GROUPS}release-groups dedup{DEDUP_DISTANCE} "
+            f"boxset{BOX_SET_COVERS} "
+            f"lookalike{lookalike_distance} catalog-{catalog} gallery-{gallery_fingerprint(covers_files)}")
+
+
+def gallery_fingerprint(covers_files: list[Path]) -> str:
+    """A hash of every prefix's done marker, which holds its hash recipe and cover list. Refuses
+    prefixes that aren't done or were hashed with different recipes, like group()."""
     _check_recipes(covers_files)
     markers = "\n".join(f"{f.name}: {(f.parent / f.name.replace('.covers.npy', '.done')).read_text()}"
                          for f in sorted(covers_files))
-    return (f"{GROUP_RULE} template{TEMPLATE_DISTANCE}-{TEMPLATE_RELEASE_GROUPS}release-groups dedup{DEDUP_DISTANCE} "
-            f"boxset{BOX_SET_COVERS} "
-            f"lookalike{lookalike_distance} catalog-{catalog} gallery-{hashlib.sha1(markers.encode()).hexdigest()[:16]}")
+    return hashlib.sha1(markers.encode()).hexdigest()[:16]
 
 
 def write_groups(groups: Groups, out_dir: Path, recipe: str) -> None:
