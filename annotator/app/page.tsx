@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Release } from "@/lib/catalog";
 import { hotkeyAction, KIND_KEYS, TAG_KEYS } from "@/lib/hotkeys";
 import { inheritsAnswer, tagsForNextFrame, type Answer } from "@/lib/carry";
-import { emptyHistory, park, stepBack, stepForward, type History } from "@/lib/history";
+import { emptyHistory, stepBack, stepForward, type History } from "@/lib/history";
 import { KINDS, SETS, TAGS, type Kind, type SetName, type Split, type Tag } from "@/lib/labels";
 import type { QueueItem } from "@/lib/queue";
 import styles from "./page.module.css";
@@ -153,6 +153,12 @@ export default function LabelerPage() {
    * out of a web page handed one over; wild labels record it.
    */
   async function ingest(input: File | string, sourceUrl?: string) {
+    // While a reopened photo is on screen, or saving, nothing else may replace it. That keeps
+    // the frames Undo stepped past on screen in order, so none is lost or shown twice.
+    if (reopened) {
+      setError("Save or skip the reopened photo before adding another.");
+      return;
+    }
     loadId.current += 1;
     setBusy("ingest");
     setError(null);
@@ -175,9 +181,6 @@ export default function LabelerPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(errorText(body, "Couldn't save that photo."));
       setPhoto({ sha1: body.sha1, file: body.file, video: null, sourceUrl: body.sourceUrl });
-      // A reopened frame the paste replaced comes back after this photo is saved
-      if (reopened) setHistory(park(history.current, reopened));
-      setReopened(null);
       clearPerPhoto();
       startNewRecord();
       lastVideo.current = null;
@@ -284,12 +287,10 @@ export default function LabelerPage() {
     const before = reopened;
     setReopened(null); // saved, so the frame on screen no longer holds its old label
     const forward = stepForward(history.current, entry);
-    // A photo pasted while the label was saving is already on screen; don't replace it
-    if (loadId.current !== loadBefore) {
-      setHistory(forward.next ? park(forward.history, forward.next) : forward.history);
-      return;
-    }
     setHistory(forward.history);
+    // A photo pasted while the label was saving is already on screen; don't replace it. Pastes
+    // wait while a reopened photo is up, so the frames Undo stepped past are all done by then.
+    if (loadId.current !== loadBefore) return;
     let shown = forward.next;
     // A record fixed here also fixes the next reopened frame that had carried the old one over
     if (shown && before && inheritsAnswer(answerOf(shown), answerOf(before))) {
