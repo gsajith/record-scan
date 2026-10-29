@@ -1,11 +1,11 @@
 # Templates, lookalike pairs and dedup groups from the pHash
 
-Issue #68, replacing the chained clusters from #20. Code at `f529319`, run 2026-10-28 on the 256
+Issue #68, replacing the chained clusters from #20. Code at `1840c97`, run 2026-10-28 on the 256
 `covers.npy` files from `2026-10-27-gallery-pass.md` and the catalog built from
 `covers-2026-10-24.jsonl`. No drive.
 
 ```
-PYTHONPATH=. pipeline/.venv/bin/python -m pipeline.gallery.cluster_duplicates   # --lookalike-distance 6
+PYTHONPATH=. pipeline/.venv/bin/python -m pipeline.gallery.cluster_duplicates   # --lookalike-distance 4
 ```
 
 ## The rule
@@ -23,41 +23,41 @@ and two covers share an artist when those sets meet.
 - A dedup group is a connected component of hashes up to 2 bits apart that share an artist, plus
   each release's own covers, template covers left out.
 
-N is 6. The recipe sidecar beside each output reads
-`series-designs-v1 template2-5release-groups dedup2 lookalike6 catalog-c506a85dfac1bcee gallery-adc597dcc38e303f`.
+N is 4, Gautham's pick (see Choosing N). The recipe sidecar beside each output reads
+`series-designs-v1 template2-5release-groups dedup2 lookalike4 catalog-c506a85dfac1bcee gallery-adc597dcc38e303f`.
 `series-designs-v1` is `GROUP_RULE`, which names the logic and changes whenever `group()` would
-write different outputs for the same numbers. The catalog fingerprint hashes every release's mbid, artist ids and release group, and the gallery
-part hashes every prefix's done marker. The loaders refuse any other recipe. They read the whole
-catalog to check it, 11 to 14 s.
+write different outputs for the same numbers. The catalog fingerprint hashes every release's
+mbid, artist ids and release group, and the gallery part hashes every prefix's done marker. The
+loaders refuse any other recipe. They read the whole catalog to check it, 11 to 14 s.
 
-## Full-gallery counts at N = 6
+## Full-gallery counts at N = 4
 
 | | Value |
 |---|---|
 | covers | 3,977,195 |
 | releases | 3,962,307 |
-| time | 115 s, 8.8 GB peak memory |
-| templates | 5,240 designs, 71,635 covers of 71,572 releases |
-| lookalike pairs | 838,710 |
-| dedup groups | 3,626,204 |
-| `templates.npy`, `lookalikes.npy`, `clusters.npy` | 19 MB, 242 MB, 602 MB |
+| time | 75 s, 6.1 GB peak memory |
+| templates | 4,819 designs, 64,678 covers of 64,630 releases |
+| lookalike pairs | 676,148 |
+| dedup groups | 3,624,445 |
+| `templates.npy`, `lookalikes.npy`, `clusters.npy` | 18 MB, 195 MB, 602 MB |
 
 Lookalike pairs by distance in bits:
 
-| 0 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|
-| 354,081 | 158,154 | 1 | 157,556 | 6 | 168,912 |
+| 0 | 2 | 3 | 4 |
+|---|---|---|---|
+| 356,086 | 160,175 | 1 | 159,886 |
 
 Dedup group sizes, in releases:
 
 | Size | Groups | Releases |
 |---|---|---|
-| 1 | 3,383,666 | 3,383,666 |
-| 2 | 191,503 | 383,006 |
-| 3 | 32,260 | 96,780 |
-| 4 | 10,301 | 41,204 |
-| 5 to 9 | 7,533 | 44,737 |
-| 10 to 99 | 941 | 12,914 |
+| 1 | 3,380,998 | 3,380,998 |
+| 2 | 192,058 | 384,116 |
+| 3 | 32,447 | 97,341 |
+| 4 | 10,392 | 41,568 |
+| 5 to 9 | 7,595 | 45,125 |
+| 10 to 99 | 955 | 13,159 |
 
 The largest dedup groups hold 85, 60, 52, 46 and 43 releases, against 568,997 for the chained
 clusters at 8 bits.
@@ -73,8 +73,8 @@ tried, at a lookalike distance of 8 unless noted:
 | the same, but 2+ releases | 4,958 | 42,402 |
 | 5+ distinct first credited non-VA artists | 1,429 | 30,897 |
 | 5+ release groups, designs within 2 bits | 4,302 | 57,871 |
-| 5+ release groups, plus same-artist links at N = 4 | 4,819 | 64,630 |
-| 5+ release groups, plus same-artist links at N = 6 (shipped) | 5,240 | 71,572 |
+| 5+ release groups, plus same-artist links at N = 4 (shipped) | 4,819 | 64,630 |
+| 5+ release groups, plus same-artist links at N = 6 | 5,240 | 71,572 |
 | 5+ release groups, plus same-artist links at N = 8 | 5,701 | 78,739 |
 
 Counting artist ids made 24,803 single releases templates: one album credited to a composer,
@@ -114,11 +114,14 @@ behind. Precision was flat from 2 to 8 bits, so the distance wasn't what failed.
 sampling draws a release with a partner at that distance, then one of its partners, which is how
 an eval query meets pairs. The coordinator chose it for picking N.
 
-No distance reached 48 of 50, the bar in the issue. The coordinator's fallback is the largest N
-with 45 or more: 6, at exactly 45, with no borderline pair. Joining same-artist links at N into
-the designs took 8 bits from 36 to 44, 6 bits from 40 to 45 and 4 bits from 43 to 46. The misses
-left at 6 and 8 bits are different singles, episodes and volumes on one design spanning fewer than
-5 release groups, or recolored remix singles.
+No distance reached 48 of 50, the bar in the issue. The coordinator's fallback, the largest N
+with 45 or more, gave 6, at exactly 45. Gautham picked 4 instead (2026-10-28): 46 and 45 of 50
+are the same within sampling noise, and 4 errs strict. The run at 6 gave 838,710 pairs against
+676,148 at 4, and 5,240 templates over 71,572 releases.
+
+Joining same-artist links at N into the designs took 8 bits from 36 to 44, 6 bits from 40 to 45
+and 4 bits from 43 to 46. The misses left at 6 and 8 bits are different singles, episodes and
+volumes on one design spanning fewer than 5 release groups, or recolored remix singles.
 
 ## Scripts
 
