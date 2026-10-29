@@ -14,6 +14,7 @@ import json
 import shlex
 import subprocess
 import sys
+from collections.abc import Collection
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
@@ -23,6 +24,7 @@ import numpy as np
 from PIL import Image
 
 from pipeline import config
+from pipeline.gallery.exclusions import exclusions_hash, load_exclusions
 from pipeline.gold.labels import KINDS, SETS, TAGS, Label, load_labels
 from pipeline.metadata.catalog import Catalog, Cover
 
@@ -70,25 +72,43 @@ def is_hit(result_mbid: str, item: EvalItem) -> bool:
     return result_mbid in item.targets
 
 
-def build_mini_gallery(items: list[EvalItem], catalog: Catalog, distractors: int, seed: int) -> list[Cover]:
-    """Every cover of every target release (sorted by mbid), then `distractors` covers drawn at random.
+def _key(cover: Cover) -> str:
+    """The cover's key in the gallery and the exclusion list: its file stem."""
+    return Path(cover.file).stem
 
-    The draw is a seeded permutation of the catalog's covers table, skipping target releases, so
-    one seed and one catalog build always give the same gallery. A catalog rebuild changes it;
-    report.json records a hash of the list so runs on different galleries are never compared.
+
+def build_mini_gallery(items: list[EvalItem], catalog: Catalog, distractors: int, seed: int,
+                       excluded: Collection[str]) -> list[Cover]:
+    """Every cover of every target release (sorted by mbid), then `distractors` covers drawn at
+    random, leaving out the covers whose key is in excluded (pipeline.gallery.exclusions).
+
+    The draw is a seeded permutation of the catalog's covers table, skipping target releases and
+    excluded covers, so one seed, one catalog build and one exclusion list always give the same
+    gallery. A catalog rebuild or a new list changes it; report.json records a hash of both so
+    runs on different galleries are never compared.
     """
     targets = set().union(*(item.targets for item in items))
-    gallery = [c for mbid in sorted(targets) for c in catalog.covers(mbid)]
+    target_covers = [c for mbid in sorted(targets) for c in catalog.covers(mbid)]
+    gallery = [c for c in target_covers if _key(c) not in excluded]
     for item in items:
         if item.targets and not any(c.mbid in item.targets for c in gallery):
-            print(f"Warning: no cover on file for {item.label.file}'s release; it cannot be a hit", file=sys.stderr)
+            print(f"Warning: no usable cover on file for {item.label.file}'s release; it cannot be a hit", file=sys.stderr)
     order = np.random.default_rng(seed).permutation(catalog.cover_count()) + 1
-    # Target covers are the only rows to skip, so this many candidates always suffice
-    rowids = order[: distractors + len(gallery)].tolist()
+    # Target and excluded covers are the only rows to skip, so this many candidates always suffice
+    rowids = order[: distractors + len(target_covers) + len(excluded)].tolist()
     candidates = catalog.covers_by_rowid(rowids)
     if len(candidates) != len(rowids):
         raise SystemExit("The catalog's covers table has gaps in its row numbers. Rebuild it with build_catalog_db.")
-    return gallery + [c for c in candidates if c.mbid not in targets][:distractors]
+    return gallery + [c for c in candidates if c.mbid not in targets and _key(c) not in excluded][:distractors]
+
+
+def fully_excluded(items: list[EvalItem], catalog: Catalog, excluded: Collection[str]) -> int:
+    """Positives with covers on file, every one of them excluded: certain misses the list causes."""
+    count = 0
+    for item in items:
+        covers = [c for mbid in item.targets for c in catalog.covers(mbid)]
+        count += bool(covers) and all(_key(c) in excluded for c in covers)
+    return count
 
 
 class MatchRow(TypedDict):
@@ -259,8 +279,9 @@ def config_hash(set_dir: Path, distractors: int, views: int, px: int | None, see
     return _short_hash(json.dumps(settings, sort_keys=True).encode())
 
 
-def gallery_hash(gallery: list[Cover]) -> str:
-    return _short_hash("\n".join(c.file for c in gallery).encode())
+def gallery_hash(gallery: list[Cover], excluded: dict[str, str]) -> str:
+    """The cover list and the exclusion list it was drawn under."""
+    return _short_hash(("\n".join(c.file for c in gallery) + f"\nexcluded {exclusions_hash(excluded)}").encode())
 
 
 def set_dir_for(set_name: str) -> Path:
@@ -275,7 +296,9 @@ class EvalSet:
     catalog: Catalog
     items: list[EvalItem]
     gallery: list[Cover]
+    excluded: dict[str, str]  # the gallery's exclusion list, cover key -> reason
     missing: int  # eval positives whose release left the catalog, scored as misses
+    all_excluded: int  # eval positives whose every cover is excluded, scored as misses
 
     @classmethod
     def prepare(cls, set_name: str, distractors: int, seed: int) -> "EvalSet":
@@ -283,14 +306,17 @@ class EvalSet:
         catalog = Catalog()
         items = load_eval_set(set_dir, catalog, clusters=None)  # duplicate clusters join once Task 5 builds them
         missing = sum(item.label.kind == "positive" and not item.targets for item in items)
-        return cls(set_dir, catalog, items, build_mini_gallery(items, catalog, distractors, seed), missing)
+        excluded = load_exclusions(config.GALLERY_DIR)
+        gallery = build_mini_gallery(items, catalog, distractors, seed, excluded)
+        return cls(set_dir, catalog, items, gallery, excluded, missing, fully_excluded(items, catalog, excluded))
 
     def describe(self) -> str:
         kinds = {k: sum(item.label.kind == k for item in self.items) for k in KINDS}
         targets = set().union(*(item.targets for item in self.items))
         n_targets = sum(c.mbid in targets for c in self.gallery)
         return (f"{len(self.items)} eval photos: {kinds['positive']} positive, {kinds['negative']} negative, "
-                f"{kinds['unknown']} unknown; {self.missing} positives no longer in the catalog, scored as misses\n"
+                f"{kinds['unknown']} unknown; {self.missing} positives no longer in the catalog, scored as misses; "
+                f"{self.all_excluded} positives with every cover excluded\n"
                 f"gallery: {n_targets} target covers + {len(self.gallery) - n_targets} distractors")
 
 
@@ -321,7 +347,7 @@ def run_eval(model: str, set_name: str, distractors: int, views: int, px: int | 
     embedder = load_embedder(model, input_px=px)
 
     # Keyed by the embedder's signature, so changed preprocessing embeds a fresh gallery
-    index_dir = work_dir / f"{embedder.signature}-{gallery_hash(gallery)}"
+    index_dir = work_dir / f"{embedder.signature}-{gallery_hash(gallery, es.excluded)}"
     # build_index writes signature.txt last, so a crash mid-build leaves a dir that rebuilds
     if not (index_dir / "signature.txt").exists():
         root = config.require_image_root()
@@ -364,8 +390,9 @@ def run_eval(model: str, set_name: str, distractors: int, views: int, px: int | 
                           *(["--px", str(px)] if px else [])])
     cfg_hash = config_hash(es.set_dir, distractors, views, px, seed)
     provenance = {"command": command, "git_sha": _git_sha(), "config_hash": cfg_hash,
-                  "gallery_hash": gallery_hash(embedded_gallery), "gallery_size": len(gallery),
-                  "gallery_embedded": len(embedded_gallery), "positives_missing": es.missing}
+                  "gallery_hash": gallery_hash(embedded_gallery, es.excluded), "gallery_size": len(gallery),
+                  "gallery_embedded": len(embedded_gallery), "positives_missing": es.missing,
+                  "positives_all_covers_excluded": es.all_excluded, "excluded_covers": len(es.excluded)}
     # The config hash keeps a same-day run with other settings from overwriting this one
     out = config.RESULTS_DIR / f"{date.today().isoformat()}-eval-{model}-{set_name}-{cfg_hash}"
     out.mkdir(parents=True, exist_ok=True)
@@ -397,7 +424,7 @@ def main(argv: list[str] | None = None) -> None:
         es = EvalSet.prepare(args.set, args.distractors, args.seed)
         print(es.describe())
         print(f"config hash: {config_hash(es.set_dir, args.distractors, args.views, args.px, args.seed)}"
-              f"  gallery hash: {gallery_hash(es.gallery)}")
+              f"  gallery hash: {gallery_hash(es.gallery, es.excluded)}")
         return
     run_eval(args.model, args.set, args.distractors, args.views, args.px, args.seed, args.work_dir or config.EMB_DIR / "eval")
 

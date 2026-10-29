@@ -6,7 +6,9 @@ from PIL import Image
 
 from pipeline.metadata.build_catalog_db import build
 from pipeline.metadata.catalog import Catalog
-from pipeline.retrieval.build_index import build_index
+from pipeline.gallery.exclusions import exclusions_hash
+from pipeline.retrieval import build_index as build_index_module
+from pipeline.retrieval.build_index import build_index, require_current_exclusions
 from pipeline.retrieval.identify import Identifier
 
 BEATLES = "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d"
@@ -111,6 +113,28 @@ def test_identify_max_pools_views_and_uses_clusters(catalog, index_dir):
     assert {m.mbid for m in three_views} == {HOMOGENIC, ABBEY}
     np.testing.assert_allclose([m.score for m in three_views], [1.0, 1.0], atol=0.01)
     assert {m.mbid for m in clustered} == {ABBEY, HOMOGENIC}
+
+
+def test_build_index_leaves_out_excluded_covers(catalog, index_dir):
+    shards = sorted(index_dir.glob("*.npz"))
+    assert build_index(shards, 4, index_dir, M=16, ef_construction=100, excluded={ABBEY, ABBEY_REISSUE}) == 2
+
+    matches = Identifier(FixedEmbedder(E0), index_dir, catalog).identify(Image.new("RGB", (64, 64)), k=3, views=1)
+
+    assert [m.mbid for m in matches] == [DEBUT, HOMOGENIC]
+
+
+def test_an_index_built_under_another_exclusion_list_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(build_index_module, "load_exclusions", lambda gallery_dir: {ABBEY: "blank"})
+    with pytest.raises(SystemExit, match="exclusion list"):
+        require_current_exclusions(tmp_path)  # built before there was a list
+
+    (tmp_path / "exclusions.txt").write_text(exclusions_hash({}))
+    with pytest.raises(SystemExit, match="exclusion list"):
+        require_current_exclusions(tmp_path)
+
+    (tmp_path / "exclusions.txt").write_text(exclusions_hash({ABBEY: "blank"}))
+    require_current_exclusions(tmp_path)
 
 
 def test_build_index_rejects_wrong_dim(tmp_path):

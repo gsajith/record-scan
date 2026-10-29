@@ -5,7 +5,9 @@ import pytest
 from pipeline.gold.labels import Label, append_label, now_iso, split_for
 from pipeline.metadata.build_catalog_db import build
 from pipeline.metadata.catalog import Catalog
-from pipeline.retrieval.eval import EvalReport, build_mini_gallery, is_hit, load_eval_set, main, write_miss_gallery
+from pipeline.retrieval import eval as eval_module
+from pipeline.retrieval.eval import (EvalReport, build_mini_gallery, gallery_hash, is_hit, load_eval_set, main,
+                                     write_miss_gallery)
 
 BEATLES = "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d"
 BJORK = "87c5dedd-371d-4a53-9f7f-80522fb7f3cb"
@@ -155,14 +157,42 @@ def test_mini_gallery_holds_every_target_cover_plus_seeded_distractors(tmp_path,
     add_label(gold, sha(2), "negative")
     items = load_eval_set(gold, catalog, clusters=None)
 
-    gallery = build_mini_gallery(items, catalog, distractors=10, seed=0)
+    gallery = build_mini_gallery(items, catalog, distractors=10, seed=0, excluded=set())
 
     mbids = [c.mbid for c in gallery]
     assert mbids[:3] == sorted([ABBEY, ABBEY_REISSUE, ABBEY_2019])
     assert len(mbids) == 13 and len(set(mbids)) == 13
     assert not {ABBEY, ABBEY_REISSUE, ABBEY_2019} & set(mbids[3:])
-    assert gallery == build_mini_gallery(items, catalog, distractors=10, seed=0)
-    assert gallery != build_mini_gallery(items, catalog, distractors=10, seed=1)
+    assert gallery == build_mini_gallery(items, catalog, distractors=10, seed=0, excluded=set())
+    assert gallery != build_mini_gallery(items, catalog, distractors=10, seed=1, excluded=set())
+
+
+def stem(mbid):
+    return mbid  # make_catalog files each release's one cover as <mbid>.jpg
+
+
+def test_mini_gallery_leaves_excluded_covers_out_of_targets_and_distractors(tmp_path, catalog):
+    gold = tmp_path / "gold"
+    add_label(gold, sha(1), "positive", ABBEY)
+    items = load_eval_set(gold, catalog, clusters=None)
+    plain = build_mini_gallery(items, catalog, distractors=10, seed=0, excluded=set())
+    excluded = {stem(ABBEY_REISSUE), *(stem(c.mbid) for c in plain[3:8])}  # a target and five distractors
+
+    gallery = build_mini_gallery(items, catalog, distractors=10, seed=0, excluded=excluded)
+
+    mbids = [c.mbid for c in gallery]
+    assert mbids[:2] == sorted([ABBEY, ABBEY_2019])
+    assert len(mbids) == 12 and not set(mbids) & excluded
+    assert mbids[2:7] == [c.mbid for c in plain[8:13]]  # the same draw, skipping the excluded
+
+
+def test_the_gallery_hash_changes_with_the_exclusion_list(tmp_path, catalog):
+    gold = tmp_path / "gold"
+    add_label(gold, sha(1), "positive", ABBEY)
+    gallery = build_mini_gallery(load_eval_set(gold, catalog, clusters=None), catalog, 10, 0, excluded=set())
+
+    assert gallery_hash(gallery, {}) == gallery_hash(gallery, {})
+    assert gallery_hash(gallery, {}) != gallery_hash(gallery, {stem(DEBUT): "blank"})
 
 
 def test_miss_gallery_shows_misses_the_weakest_hits_and_the_strongest_negatives(tmp_path):
@@ -182,21 +212,25 @@ def test_miss_gallery_shows_misses_the_weakest_hits_and_the_strongest_negatives(
     assert html.index("/photos/wall.jpg") > html.index("Highest-scoring negatives") > html.index("/photos/missed.jpg")
 
 
-def test_dry_run_on_a_temp_set(tmp_path, reload_config, capsys):
+def test_dry_run_on_a_temp_set(tmp_path, reload_config, capsys, monkeypatch):
     data = tmp_path / "data"
     (data / "metadata").mkdir(parents=True)
     make_catalog(data / "metadata", [
         {"title": "Abbey Road", "id": ABBEY, "artist_ids": [BEATLES]},
+        {"title": "Debut", "id": DEBUT, "artist_ids": [BJORK]},
         *({"title": f"Filler {n}", "id": m, "artist_ids": [BEATLES]} for n, m in enumerate(FILLER)),
-    ], {BEATLES: {"name": "Beatles, The"}})
+    ], {BEATLES: {"name": "Beatles, The"}, BJORK: {"name": "Björk"}})
     reload_config(RS_DATA_DIR=data, RS_IMAGE_ROOT=tmp_path / "no-drive")
     add_label(data / "gold", sha(1), "positive", ABBEY, tags=["glare"])
     add_label(data / "gold", sha(2), "negative")
+    add_label(data / "gold", sha(3), "positive", DEBUT)  # its one cover is excluded, so it can't be a hit
+    monkeypatch.setattr(eval_module, "load_exclusions", lambda gallery_dir: {stem(DEBUT): "blank"})
 
     main(["--model", "clip-vit-b-32", "--set", "gold", "--distractors", "5", "--dry-run"])
 
     out = capsys.readouterr().out
-    assert "2 eval photos: 1 positive, 1 negative, 0 unknown" in out
+    assert "3 eval photos: 2 positive, 1 negative, 0 unknown" in out
     assert "0 positives no longer in the catalog" in out
+    assert "1 positives with every cover excluded" in out
     assert "gallery: 1 target covers + 5 distractors" in out
     assert "config hash:" in out
