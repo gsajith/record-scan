@@ -34,6 +34,9 @@ function errorText(body: unknown, fallback: string): string {
   return typeof body === "object" && body !== null && "error" in body ? String(body.error) : fallback;
 }
 
+// Every result up to the search route's cap; past it, a hint asks for one more word
+const MAX_RESULTS = 500;
+
 // Gold is your own photos, so an image from the web belongs in wild
 const LINKS_ARE_WILD = "Image links go in the wild set. Switch to Wild to add this one.";
 
@@ -229,7 +232,7 @@ export default function LabelerPage() {
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, { signal: controller.signal });
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=${MAX_RESULTS}`, { signal: controller.signal });
         const body = await res.json();
         if (!res.ok) throw new Error(errorText(body, "Search failed."));
         setResults(body.results);
@@ -517,6 +520,9 @@ export default function LabelerPage() {
             )}
             {searchError && <p className={styles.error}>{searchError}</p>}
             {query.trim() && !searchError && results.length === 0 && <p className={styles.hint}>No releases match.</p>}
+            {results.length === MAX_RESULTS && (
+              <p className={styles.hint}>Showing the first {MAX_RESULTS}. Add a word to narrow the search.</p>
+            )}
             <ul className={styles.results} id="results" role="listbox" aria-label="Search results">
               {results.map((r, i) => (
                 <li key={r.mbid} role="presentation">
@@ -539,8 +545,8 @@ export default function LabelerPage() {
                     <img
                       src={r.thumb}
                       alt=""
-                      width={56}
-                      height={56}
+                      width={96}
+                      height={96}
                       loading="lazy"
                       // Some covers have no thumbnail; show the empty tile instead of a broken image
                       onError={(e) => e.currentTarget.removeAttribute("src")}
