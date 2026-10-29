@@ -56,9 +56,10 @@ TEMPLATE_DISTANCE = 2
 TEMPLATE_RELEASE_GROUPS = 5
 # Same-artist hashes this close are one cover in the index
 DEDUP_DISTANCE = 2
-# Same-artist hashes this close are lookalikes, a pair at a time. The largest distance with 45 of 50
-# hand-checked pairs the same picture, in docs/results/2026-10-28-lookalike-pairs.md.
-LOOKALIKE_DISTANCE = 6
+# Same-artist hashes this close are lookalikes, a pair at a time. Gautham's pick: 4 and 6 scored 46 and
+# 45 of 50 hand-checked pairs, the same within sampling noise, and 4 errs strict
+# (docs/results/2026-10-28-lookalike-pairs.md).
+LOOKALIKE_DISTANCE = 4
 # Names group()'s logic in the recipe. Change it whenever group() would write different outputs
 # from the same input and numbers above, so old outputs are refused, as HASH_RECIPE does for hashes.
 GROUP_RULE = "series-designs-v1"
