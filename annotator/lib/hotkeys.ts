@@ -7,7 +7,8 @@ export type HotkeyAction =
   | { type: "tag"; tag: Tag }
   | { type: "skip" }
   | { type: "save" }
-  | { type: "search" };
+  | { type: "search" }
+  | { type: "undo" };
 
 /** One key per tag, in TAGS order: the number row, then - and =. */
 export const TAG_KEYS = "1234567890-=";
@@ -17,8 +18,10 @@ export const KIND_KEYS: Record<Kind, string> = { positive: "p", negative: "n", u
 const KIND_BY_KEY = Object.fromEntries(Object.entries(KIND_KEYS).map(([kind, key]) => [key, kind as Kind]));
 
 export function hotkeyAction(e: { key: string; typing: boolean; modifier: boolean }): HotkeyAction | null {
-  if (e.typing || e.modifier) return null;
+  if (e.typing) return null;
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  // ⌘Z or Ctrl+Z reopens the last save; in a text field the browser's own undo runs instead
+  if (e.modifier) return key === "z" ? { type: "undo" } : null;
   if (Object.hasOwn(KIND_BY_KEY, key)) return { type: "kind", kind: KIND_BY_KEY[key] };
   const tagIndex = TAG_KEYS.indexOf(key);
   if (key.length === 1 && tagIndex !== -1) return { type: "tag", tag: TAGS[tagIndex] };

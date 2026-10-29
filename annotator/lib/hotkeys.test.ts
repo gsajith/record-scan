@@ -29,6 +29,12 @@ describe("hotkeyAction", () => {
     ]);
   });
 
+  it("maps Command-Z or Control-Z to undo, but leaves a text field its own undo", () => {
+    expect(hotkeyAction({ key: "z", typing: false, modifier: true })).toEqual({ type: "undo" });
+    expect(hotkeyAction({ key: "z", typing: true, modifier: true })).toBeNull();
+    expect(press("z")).toBeNull();
+  });
+
   it("does nothing while typing in a field or with Command, Control or Option held", () => {
     for (const key of ["p", "1", "s", "Enter", "/"]) {
       expect(hotkeyAction({ key, typing: true, modifier: false })).toBeNull();
