@@ -29,9 +29,12 @@ The server only listens on 127.0.0.1 and refuses requests from other sites or ho
 Pick **Gold** or **Wild** at the top. The next unlabeled photo loads by itself, and so does
 the one after each save.
 
-- **Gold** is your own photos of your own records, always licensed `own`. Drop record videos
-  into `gold/inbox/`, run `python -m pipeline.gold.sample_frames gold` to turn them into
-  frames, then label the frames here. You can also paste, drop or choose a photo.
+- **Gold** is your own photos of your own records, always licensed `own`. Drop held-up clips
+  into `gold/inbox/` and run `python -m pipeline.gold.sample_frames gold`: each clip gives 8
+  frames spread across it. Flipping videos go in a separate run, with
+  `python -m pipeline.gold.sample_frames gold --fps 2 --max-frames 90`, since one run treats
+  every video in the inbox the same way. Then label the frames here. You can also paste, drop
+  or choose a photo.
 - **Wild** is candid photos of records from the internet (decision D9). Paste or drop an
   image, or paste or drag in an image link. When a pasted link or a drag out of a web page
   gives the image's address, the label records it. A pasted or dropped photo that looks like
