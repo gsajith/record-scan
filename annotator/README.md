@@ -57,8 +57,14 @@ front one changes; `crate` stays on. Everything resets for a new video or a past
 | Esc | Leave the search box |
 | Enter | Save |
 | S | Skip this photo for now |
+| ⌘Z or Ctrl+Z | Undo: reopen the last save, with its fields filled in |
 
-No shortcut fires while you type in a field or hold ⌘.
+No shortcut fires while you type in a field, and none but undo fires while you hold ⌘.
+
+Undo steps back through the saves made since the page loaded, one per press. Saving a reopened
+photo adds a new label line, which replaces the old one, and moves on to the next photo you
+stepped back past, then to the queue. S on a reopened photo keeps its label and moves on.
+Reloading the page or switching sets clears the undo history.
 
 ## Where files go
 
