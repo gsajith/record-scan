@@ -2,13 +2,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Release } from "@/lib/catalog";
 import { hotkeyAction, KIND_KEYS, TAG_KEYS } from "@/lib/hotkeys";
-import { tagsForNextFrame } from "@/lib/carry";
+import { inheritsAnswer, tagsForNextFrame, type Answer } from "@/lib/carry";
+import { emptyHistory, stepBack, stepForward, type History } from "@/lib/history";
 import { KINDS, SETS, TAGS, type Kind, type SetName, type Split, type Tag } from "@/lib/labels";
 import type { QueueItem } from "@/lib/queue";
 import styles from "./page.module.css";
 
 type Result = Release & { thumb: string };
 type Counts = Record<SetName, Record<Split, number>>;
+/** A frame as it was saved, so Undo can reopen it with the same fields. */
+type Saved = { photo: QueueItem; picked: Result | null; kind: Kind; tags: Tag[]; notes: string };
+
+function answerOf(s: Saved): Answer {
+  return { video: s.photo.video, kind: s.kind, mbid: s.picked?.mbid ?? null };
+}
 
 // Browsers often give HEIC files no type, so the extension counts too
 const IMAGE_EXT = /\.(heic|heif)$/i;
@@ -26,6 +33,9 @@ function droppedUrl(data: DataTransfer): string | undefined {
 function errorText(body: unknown, fallback: string): string {
   return typeof body === "object" && body !== null && "error" in body ? String(body.error) : fallback;
 }
+
+// Every result up to the search route's cap; past it, a hint asks for one more word
+const MAX_RESULTS = 500;
 
 // Gold is your own photos, so an image from the web belongs in wild
 const LINKS_ARE_WILD = "Image links go in the wild set. Switch to Wild to add this one.";
@@ -71,6 +81,15 @@ export default function LabelerPage() {
   const [kind, setKind] = useState<Kind>("positive");
   const [tags, setTags] = useState<Tag[]>([]);
   const [notes, setNotes] = useState("");
+  // Saves since the page loaded, and the saved frame on screen when Undo reopened it. A ref, so
+  // save reads the history as it is when the label lands, not as it was when the save began.
+  const history = useRef<History<Saved>>(emptyHistory());
+  const [canUndo, setCanUndo] = useState(false);
+  const [reopened, setReopened] = useState<Saved | null>(null);
+  const setHistory = useCallback((h: History<Saved>) => {
+    history.current = h;
+    setCanUndo(h.back.length > 0);
+  }, []);
 
   const searchRef = useRef<HTMLInputElement>(null);
   const lastVideo = useRef<string | null>(null);
@@ -98,6 +117,7 @@ export default function LabelerPage() {
   const applyQueue = useCallback(
     (body: QueueResponse) => {
       setError(null);
+      setReopened(null);
       setPhoto(body.next);
       setRemaining(body.remaining);
       setCounts(body.counts);
@@ -136,6 +156,12 @@ export default function LabelerPage() {
    * out of a web page handed one over; wild labels record it.
    */
   async function ingest(input: File | string, sourceUrl?: string) {
+    // While a reopened photo is on screen, or saving, nothing else may replace it. That keeps
+    // the frames Undo stepped past on screen in order, so none is lost or shown twice.
+    if (reopened) {
+      setError("Save or skip the reopened photo before adding another.");
+      return;
+    }
     loadId.current += 1;
     setBusy("ingest");
     setError(null);
@@ -191,6 +217,8 @@ export default function LabelerPage() {
     if (next === set || busy !== null) return;
     setBusy("load");
     setSkipped([]);
+    setHistory(emptyHistory());
+    setReopened(null);
     setStatus(null);
     setError(null);
     lastVideo.current = null;
@@ -204,11 +232,13 @@ export default function LabelerPage() {
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, { signal: controller.signal });
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=${MAX_RESULTS}`, { signal: controller.signal });
         const body = await res.json();
         if (!res.ok) throw new Error(errorText(body, "Search failed."));
         setResults(body.results);
         setActive(0);
+        // A new list starts at the top, even if the last one was scrolled by hand
+        document.getElementById("results")?.scrollTo({ top: 0 });
         setSearchError(null);
       } catch (e) {
         if (!controller.signal.aborted) setSearchError((e as Error).message);
@@ -258,13 +288,72 @@ export default function LabelerPage() {
       setBusy(null);
       return;
     }
-    // A photo pasted while the label was saving is already on screen; don't replace it
+    const entry: Saved = { photo, picked: label.mbid ? picked : null, kind, tags, notes };
+    const before = reopened;
+    setReopened(null); // saved, so the frame on screen no longer holds its old label
+    const forward = stepForward(history.current, entry);
+    setHistory(forward.history);
+    // A photo pasted while the label was saving is already on screen; don't replace it. Pastes
+    // are refused while a reopened photo is up, so no frame Undo stepped past is waiting here.
     if (loadId.current !== loadBefore) return;
-    await loadNext(skipped);
+    let shown = forward.next;
+    // A record fixed here also fixes the next reopened frame that had carried the old one over
+    if (shown && before && inheritsAnswer(answerOf(shown), answerOf(before))) {
+      shown = { ...shown, picked: entry.picked, kind: entry.kind };
+    }
+    await moveTo(forward.next, shown);
+  }
+
+  /**
+   * Show the next frame Undo stepped past, or the next photo from the queue when there is none.
+   * `shown` is what to put on screen for `next`, when a fix carried over to it.
+   */
+  async function moveTo(next: Saved | null, shown = next) {
+    if (next) {
+      showSaved(next, shown ?? next);
+      setBusy(null);
+    } else {
+      setBusy("load");
+      await loadNext(skipped);
+    }
+  }
+
+  /** Put a saved frame back on screen, filled in with `shown`: its saved fields unless a fix carried over. */
+  function showSaved(entry: Saved, shown = entry) {
+    loadId.current += 1; // a queue load still in flight must not replace it
+    setReopened(entry);
+    setPhoto(entry.photo);
+    setPicked(shown.picked);
+    setKind(shown.kind);
+    setTags(shown.tags);
+    setNotes(shown.notes);
+    setQuery("");
+    setResults([]);
+    setError(null);
+    lastVideo.current = entry.photo.video;
+  }
+
+  function undo() {
+    if (busy !== null) return;
+    const back = stepBack(history.current, reopened);
+    if (!back) return;
+    setHistory(back.history);
+    showSaved(back.entry);
+    setStatus("Reopened a saved photo. Saving again replaces its label");
   }
 
   function skip() {
-    if (!photo || busy !== null) return;
+    if (busy !== null) return;
+    // A reopened frame keeps the label it already has
+    if (reopened) {
+      const forward = stepForward(history.current, reopened);
+      setHistory(forward.history);
+      setReopened(null); // recorded, so a second S while the queue loads can't record it again
+      setStatus(null);
+      moveTo(forward.next);
+      return;
+    }
+    if (!photo) return;
     const next = [...skipped, photo.sha1];
     setSkipped(next);
     setStatus(null);
@@ -281,10 +370,22 @@ export default function LabelerPage() {
     function onKeyDown(e: KeyboardEvent) {
       // Enter on a focused button already clicks it
       if (e.key === "Enter" && e.target instanceof HTMLButtonElement) return;
-      const action = hotkeyAction({ key: e.key, typing: isTyping(e.target), modifier: e.metaKey || e.ctrlKey || e.altKey });
-      if (!action || !photo) return;
-      // A held key repeats; one press should save or skip one photo
-      if (e.repeat && (action.type === "skip" || action.type === "save")) return;
+      const action = hotkeyAction({
+        key: e.key,
+        typing: isTyping(e.target),
+        modifier: e.metaKey || e.ctrlKey || e.altKey,
+        plainCommand: (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey,
+      });
+      if (!action) return;
+      // A held key repeats; one press should save, skip or undo one photo
+      if (e.repeat && (action.type === "skip" || action.type === "save" || action.type === "undo")) return;
+      // Undo also works once the queue is empty and no photo is on screen
+      if (action.type === "undo") {
+        e.preventDefault();
+        undo();
+        return;
+      }
+      if (!photo) return;
       e.preventDefault();
       if (action.type === "kind") setKind(action.kind);
       else if (action.type === "tag") toggleTag(action.tag);
@@ -421,6 +522,9 @@ export default function LabelerPage() {
             )}
             {searchError && <p className={styles.error}>{searchError}</p>}
             {query.trim() && !searchError && results.length === 0 && <p className={styles.hint}>No releases match.</p>}
+            {results.length === MAX_RESULTS && (
+              <p className={styles.hint}>Showing the first {MAX_RESULTS}. Add a word to narrow the search.</p>
+            )}
             <ul className={styles.results} id="results" role="listbox" aria-label="Search results">
               {results.map((r, i) => (
                 <li key={r.mbid} role="presentation">
@@ -443,8 +547,8 @@ export default function LabelerPage() {
                     <img
                       src={r.thumb}
                       alt=""
-                      width={56}
-                      height={56}
+                      width={96}
+                      height={96}
                       loading="lazy"
                       // Some covers have no thumbnail; show the empty tile instead of a broken image
                       onError={(e) => e.currentTarget.removeAttribute("src")}
@@ -482,6 +586,9 @@ export default function LabelerPage() {
           </p>
         )}
         <div className={styles.actions}>
+          <button type="button" className={styles.skip} disabled={busy !== null || !canUndo} onClick={undo}>
+            Undo <kbd>⌘Z</kbd>
+          </button>
           <button type="button" className={styles.skip} disabled={!photo || busy !== null} onClick={skip}>
             Skip <kbd>S</kbd>
           </button>

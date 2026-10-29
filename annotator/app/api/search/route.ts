@@ -1,9 +1,9 @@
 import { getCatalog } from "@/lib/data";
 
-// GET /api/search?q=abbey+road&limit=20
+// GET /api/search?q=abbey+road&limit=20. At most 500, so a one-word search stays quick to draw.
 export function GET(request: Request) {
   const params = new URL(request.url).searchParams;
-  const limit = Math.min(Math.max(Number(params.get("limit")) || 20, 1), 50);
+  const limit = Math.min(Math.max(Number(params.get("limit")) || 20, 1), 500);
   let catalog;
   try {
     catalog = getCatalog();
