@@ -237,6 +237,8 @@ export default function LabelerPage() {
         if (!res.ok) throw new Error(errorText(body, "Search failed."));
         setResults(body.results);
         setActive(0);
+        // A new list starts at the top, even if the last one was scrolled by hand
+        document.getElementById("results")?.scrollTo({ top: 0 });
         setSearchError(null);
       } catch (e) {
         if (!controller.signal.aborted) setSearchError((e as Error).message);
