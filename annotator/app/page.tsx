@@ -78,8 +78,8 @@ export default function LabelerPage() {
   const [kind, setKind] = useState<Kind>("positive");
   const [tags, setTags] = useState<Tag[]>([]);
   const [notes, setNotes] = useState("");
-  // Saves since the page loaded, and the saved frame on screen when Undo reopened it. A ref, so a
-  // save finishing after a paste or an undo reads the history as it is then.
+  // Saves since the page loaded, and the saved frame on screen when Undo reopened it. A ref, so
+  // save reads the history as it is when the label lands, not as it was when the save began.
   const history = useRef<History<Saved>>(emptyHistory());
   const [canUndo, setCanUndo] = useState(false);
   const [reopened, setReopened] = useState<Saved | null>(null);
@@ -289,7 +289,7 @@ export default function LabelerPage() {
     const forward = stepForward(history.current, entry);
     setHistory(forward.history);
     // A photo pasted while the label was saving is already on screen; don't replace it. Pastes
-    // wait while a reopened photo is up, so the frames Undo stepped past are all done by then.
+    // are refused while a reopened photo is up, so no frame Undo stepped past is waiting here.
     if (loadId.current !== loadBefore) return;
     let shown = forward.next;
     // A record fixed here also fixes the next reopened frame that had carried the old one over
@@ -343,6 +343,7 @@ export default function LabelerPage() {
     if (reopened) {
       const forward = stepForward(history.current, reopened);
       setHistory(forward.history);
+      setReopened(null); // recorded, so a second S while the queue loads can't record it again
       setStatus(null);
       moveTo(forward.next);
       return;

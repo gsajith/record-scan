@@ -65,6 +65,7 @@ Undo steps back through the saves made since the page loaded, one per press. Sav
 photo adds a new label line, which replaces the old one, and moves on to the next photo you
 stepped back past, then to the queue. A record you fix carries on to the next reopened photos of
 the same clip that still had the old one. S on a reopened photo keeps its label and moves on.
+Pasting, dropping or choosing a photo waits until the reopened photos are saved or skipped.
 Reloading the page or switching sets clears the undo history.
 
 ## Where files go
