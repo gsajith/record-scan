@@ -390,6 +390,19 @@ def test_various_artists_alone_is_not_a_shared_artist(tmp_path):
 
 
 
+def test_a_box_set_with_three_covers_stands_alone_and_does_not_join_its_albums(tmp_path):
+    album, other = BASE, ~BASE & (2**64 - 1)  # two unrelated albums by one artist
+    box = mbid(9)  # its fronts: both albums' pictures and its own
+    rows = [(mbid(0), album), (mbid(1), album), (mbid(2), other),
+            (f"{box}-1", album), (f"{box}-2", other), (f"{box}-3", flip(BASE, *range(0, 64, 2)))]
+    artists = {mbid(i): ["gould"] for i in (0, 1, 2, 9)}
+
+    clusters = group([write_covers(tmp_path, "00", rows)], artists, {}, lookalike_distance=4).clusters
+
+    assert clusters[mbid(0)] == clusters[mbid(1)]  # one album's reissue still dedups
+    assert len({clusters[mbid(0)], clusters[mbid(2)], clusters[box]}) == 3
+
+
 def components(n, links):
     """Union-find: each of range(n)'s root once the links are joined."""
     parent = list(range(n))
@@ -451,7 +464,11 @@ def test_group_finds_what_comparing_every_pair_of_covers_finds(tmp_path):
         a, b = sorted((mbid(release[i]), mbid(release[j])))
         if a != b and bits(i, j) <= 8:
             expected[(a, b)] = min(expected.get((a, b), 64), bits(i, j))
-    dedup = components(max(release) + 1, [(release[i], release[j]) for i, j in linked if bits(i, j) <= 2])
+    # Dedup groups join covers within 2 bits, and each cover to its release unless the release is a box set
+    box_sets = {r for r in release if release.count(r) >= cluster_duplicates.BOX_SET_COVERS}
+    own = [(i, len(hashes) + release[i]) for i in covers if not template[i] and carried[i] and release[i] not in box_sets]
+    dedup = components(len(hashes) + max(release) + 1, [(i, j) for i, j in linked if bits(i, j) <= 2] + own)
+    dedup = dedup[len(hashes):]  # by release
 
     design_releases = {}
     for i in covers:
@@ -462,5 +479,5 @@ def test_group_finds_what_comparing_every_pair_of_covers_finds(tmp_path):
     assert pairs(groups) == expected
     same = {(a, b): dedup[a] == dedup[b] for a, b in itertools.combinations(sorted(set(release)), 2)}
     chained = [p for p, joined in same.items() if joined and (mbid(p[0]), mbid(p[1])) not in expected]
-    assert any(template) and len(expected) > 50 and chained  # real groups to find, some joined only through others
+    assert any(template) and len(expected) > 50 and chained and box_sets  # real groups, some joined only through others
     assert same == {(a, b): groups.clusters[mbid(a)] == groups.clusters[mbid(b)] for a, b in same}

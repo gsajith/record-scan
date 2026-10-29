@@ -18,7 +18,8 @@ release using its hash, Various Artists left out. Writes three outputs to config
   mbid_a < mbid_b and the smallest distance between their covers.
 - clusters.npy: one row per release (mbid, cluster_id, cluster_size in releases). Connected
   components of hashes up to DEDUP_DISTANCE bits apart that share an artist, plus each release's
-  own covers, template covers left out. One vector per cluster in the index.
+  own covers, template covers left out. A release with BOX_SET_COVERS or more covers stands alone.
+  One vector per cluster in the index.
 
 Each has a .recipe beside it naming the rule, the catalog and the gallery it came from, and the
 loaders refuse a stale one. Needs no drive. Refuses a gallery whose prefixes were hashed with
@@ -56,13 +57,16 @@ TEMPLATE_DISTANCE = 2
 TEMPLATE_RELEASE_GROUPS = 5
 # Same-artist hashes this close are one cover in the index
 DEDUP_DISTANCE = 2
+# A release with this many covers or more, such as a box set holding each album's front, stands alone
+# in the dedup groups, so it can't join unrelated albums through its covers
+BOX_SET_COVERS = 3
 # Same-artist hashes this close are lookalikes, a pair at a time. Gautham's pick: 4 and 6 scored 46 and
 # 45 of 50 hand-checked pairs, the same within sampling noise, and 4 errs strict
 # (docs/results/2026-10-28-lookalike-pairs.md).
 LOOKALIKE_DISTANCE = 4
 # Names group()'s logic in the recipe. Change it whenever group() would write different outputs
 # from the same input and numbers above, so old outputs are refused, as HASH_RECIPE does for hashes.
-GROUP_RULE = "series-designs-v1"
+GROUP_RULE = "series-designs-v2"
 # On compilations, so sharing it says nothing about two covers
 VARIOUS_ARTISTS = "89ad4ac3-39f7-470e-963a-56509c546377"
 # The near-duplicate search needs this many of its blocks to match exactly (see near_pairs)
@@ -133,9 +137,10 @@ def group(covers_files: list[Path], artists: Mapping[str, Iterable[str]], releas
     lookalikes = _release_pairs(link_a, link_b, link_distance, hr_hash, hr_release, n_hashes, mbids)
 
     # Dedup clusters: nodes are the hashes, then the releases. Each usable hash links to its
-    # releases, and usable hashes up to DEDUP_DISTANCE apart that share an artist link.
+    # releases, except box sets, and usable hashes up to DEDUP_DISTANCE apart that share an artist link.
     close = link_distance <= DEDUP_DISTANCE
-    by_hash = usable[hr_hash]
+    box_set = np.bincount(mbid_of_row, minlength=n_releases) >= BOX_SET_COVERS
+    by_hash = usable[hr_hash] & ~box_set[hr_release]
     src = np.concatenate([link_a[close], hr_hash[by_hash]])
     dst = np.concatenate([link_b[close], n_hashes + hr_release[by_hash]])
     size = n_hashes + n_releases
@@ -335,6 +340,7 @@ def groups_recipe(covers_files: list[Path], lookalike_distance: int, catalog: st
     markers = "\n".join(f"{f.name}: {(f.parent / f.name.replace('.covers.npy', '.done')).read_text()}"
                          for f in sorted(covers_files))
     return (f"{GROUP_RULE} template{TEMPLATE_DISTANCE}-{TEMPLATE_RELEASE_GROUPS}release-groups dedup{DEDUP_DISTANCE} "
+            f"boxset{BOX_SET_COVERS} "
             f"lookalike{lookalike_distance} catalog-{catalog} gallery-{hashlib.sha1(markers.encode()).hexdigest()[:16]}")
 
 
